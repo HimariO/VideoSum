@@ -1,5 +1,9 @@
 # compiled python files
 *.pyc
+*.npy
+*.avi
+*.jpg
+*.png
 
 # tensorboard logs directories
 logs
