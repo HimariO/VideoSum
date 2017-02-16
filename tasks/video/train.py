@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings('ignore')
 
 import tensorflow as tf
 import numpy as np
@@ -8,9 +7,25 @@ import getopt
 import time
 import sys
 import os
+import csv
 
 from dnc.dnc import DNC
+from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController
+from moviepy.video.io.VideoFileClip import VideoFileClip
+
+warnings.filterwarnings('ignore')
+anno_path = './dataset/MSR.csv'
+video_dir = './dataset/YouTubeClips'
+
+
+def load_video(filepath):
+    clip = VideoFileClip(filepath)
+    video = []
+    for frame in clip.iter_frames():
+        norm = np.divide(frame, 255)
+        video.append(norm)
+    return
 
 
 def llprint(message):
@@ -19,7 +34,13 @@ def llprint(message):
 
 
 def load(path):
-    return pickle.load(open(path, 'rb'))
+    data = []
+    with open(path, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if row['Language'] == 'English':
+                data.append(row)
+    return data
 
 
 def onehot(index, size):
@@ -28,17 +49,17 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(sample, target_code, word_space_size):
-    input_vec = np.array(sample[0]['inputs'], dtype=np.float32)
-    output_vec = np.array(sample[0]['inputs'], dtype=np.float32)
-    seq_len = input_vec.shape[0]
+def prepare_sample(sample, target_code, word_space_size, video):
     weights_vec = np.zeros(seq_len, dtype=np.float32)
+    output_vec = np.array(sample['inputs'], dtype=np.float32)
+
+    input_vec = load_video()
+    seq_len = input_vec.shape[0]
 
     target_mask = (input_vec == target_code)
     output_vec[target_mask] = sample[0]['outputs']
     weights_vec[target_mask] = 1.0  # indicate where the answer started in this vector.
 
-    input_vec = np.array([onehot(code, word_space_size) for code in input_vec])
     output_vec = np.array([onehot(code, word_space_size) for code in output_vec])
 
     return (
@@ -57,12 +78,13 @@ if __name__ == '__main__':
     tb_logs_dir = os.path.join(dirname, 'logs')
 
     llprint("Loading Data ... ")
-    lexicon_dict = load(os.path.join(data_dir, 'lexicon-dict.pkl'))
-    data = load(os.path.join(data_dir, 'train', 'train.pkl'))
+    lexicon_dict = load(anno_path)
+    data = load(anno_path)
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = output_size = len(lexicon_dict)
+    input_size = 1 * 512 * 14 * 14
+    output_size = len(lexicon_dict)
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
     words_count = 256
@@ -93,7 +115,9 @@ if __name__ == '__main__':
             llprint("Building Computational Graph ... ")
             llprint("Building VGG ... ")
 
-
+            vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
+            image_holder = tf.placeholder('float', [1, 224, 224, 3])
+            vgg.build(image_holder)
 
             llprint("Building DNC ... ")
 
@@ -162,7 +186,13 @@ if __name__ == '__main__':
                     llprint("\rIteration %d/%d" % (i, end))
 
                     sample = np.random.choice(data, 1)
-                    input_data, target_output, seq_len, weights = prepare_sample(sample, lexicon_dict['-'], word_space_size)
+                    video_input, target_outputs, seq_len, weights = prepare_sample(sample, lexicon_dict['-'], word_space_size)
+
+                    input_data = []
+                    for frame in video_input:
+                        f5_3 = session.run([vgg.conv5_3], feed_dict={image_holder: frame})
+                        input_data.append(np.reshape(f5_3, [1, -1]))
+                    input_data = np.array(input_data)
 
                     summerize = (i % 100 == 0)
                     take_checkpoint = (i != 0) and (i % end == 0)
@@ -173,7 +203,7 @@ if __name__ == '__main__':
                         summerize_op if summerize else no_summerize
                     ], feed_dict={
                         ncomputer.input_data: input_data,
-                        ncomputer.target_output: target_output,
+                        ncomputer.target_output: target_outputs,
                         ncomputer.sequence_length: seq_len,
                         loss_weights: weights
                     })

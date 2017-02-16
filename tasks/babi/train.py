@@ -29,12 +29,12 @@ def onehot(index, size):
 
 
 def prepare_sample(sample, target_code, word_space_size):
-    input_vec = np.array(sample[0]['inputs'], dtype=np.float32)
+    input_vec = np.array(sample[0]['inputs'], dtype=np.float32)  # input_vec is series of dictionary index from biai's sample question.
     output_vec = np.array(sample[0]['inputs'], dtype=np.float32)
     seq_len = input_vec.shape[0]
     weights_vec = np.zeros(seq_len, dtype=np.float32)
 
-    target_mask = (input_vec == target_code)
+    target_mask = (input_vec == target_code)  # this give you a bool nparray of element-wise compartion.
     output_vec[target_mask] = sample[0]['outputs']
     weights_vec[target_mask] = 1.0  # indicate where the answer started in this vector.
 
