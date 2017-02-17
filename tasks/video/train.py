@@ -13,19 +13,24 @@ from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
+from PIL import Image
 
 warnings.filterwarnings('ignore')
-anno_path = './dataset/MSR.csv'
-video_dir = './dataset/YouTubeClips'
+anno_file = './dataset/MSR_en.csv'
+dict_file = './dataset/MSR_en_dict.csv'
+video_dir = './dataset/YouTubeClips/'
 
 
 def load_video(filepath):
     clip = VideoFileClip(filepath)
     video = []
     for frame in clip.iter_frames():
-        norm = np.divide(frame, 255)
+        img = Image.fromarray(frame)
+        img = img.resize((224, 224))
+        norm = np.divide(np.array(img), 255)
         video.append(norm)
-    return
+
+    return np.array(video)
 
 
 def llprint(message):
@@ -33,14 +38,21 @@ def llprint(message):
     sys.stdout.flush()
 
 
-def load(path):
-    data = []
-    with open(path, newline='') as csvfile:
+def load(anno_path, dict_path):
+    datas = []
+    dictionary = {}
+
+    with open(anno_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            if row['Language'] == 'English':
-                data.append(row)
-    return data
+            data.append(row)
+
+    with open(dict_path, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            dictionary[row['word']] = int(row['id'])
+
+    return datas, dictionary
 
 
 def onehot(index, size):
@@ -49,24 +61,19 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(sample, target_code, word_space_size, video):
-    weights_vec = np.zeros(seq_len, dtype=np.float32)
-    output_vec = np.array(sample['inputs'], dtype=np.float32)
+def prepare_sample(annotation, dictionary):
+    output_str = annotation['Description'].split()
+    output_str = [dictionary[i] for i in output_str]
+    output_str = [onehot(i) for i in output_str]
+    output_vec = np.array(output_str)
 
-    input_vec = load_video()
-    seq_len = input_vec.shape[0]
-
-    target_mask = (input_vec == target_code)
-    output_vec[target_mask] = sample[0]['outputs']
-    weights_vec[target_mask] = 1.0  # indicate where the answer started in this vector.
-
-    output_vec = np.array([onehot(code, word_space_size) for code in output_vec])
+    input_vec = load_video(video_dir + '%s_%s_%s' % (annotation['VideoID'], annotation['Start'], annotation['End']))
+    seq_len = input_vec.shape[0] + output_vec.shape[0] + 1
 
     return (
         np.reshape(input_vec, (1, -1, word_space_size)),
         np.reshape(output_vec, (1, -1, word_space_size)),
         seq_len,
-        np.reshape(weights_vec, (1, -1, 1))
     )
 
 
@@ -78,8 +85,7 @@ if __name__ == '__main__':
     tb_logs_dir = os.path.join(dirname, 'logs')
 
     llprint("Loading Data ... ")
-    lexicon_dict = load(anno_path)
-    data = load(anno_path)
+    data, lexicon_dict = load(anno_file, dict_file)
     llprint("Done!\n")
 
     batch_size = 1
@@ -137,9 +143,10 @@ if __name__ == '__main__':
 
             output, _ = ncomputer.get_outputs()
 
-            loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            # loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            # output tensors will containing all output from both input steps and output steps.
             loss = tf.reduce_mean(
-                loss_weights * tf.nn.softmax_cross_entropy_with_logits(output, ncomputer.target_output)
+                tf.nn.softmax_cross_entropy_with_logits(output, ncomputer.target_output)
             )
 
             summeries = []
@@ -186,7 +193,7 @@ if __name__ == '__main__':
                     llprint("\rIteration %d/%d" % (i, end))
 
                     sample = np.random.choice(data, 1)
-                    video_input, target_outputs, seq_len, weights = prepare_sample(sample, lexicon_dict['-'], word_space_size)
+                    video_input, target_outputs, seq_len = prepare_sample(sample, lexicon_dict)
 
                     input_data = []
                     for frame in video_input:
@@ -205,7 +212,6 @@ if __name__ == '__main__':
                         ncomputer.input_data: input_data,
                         ncomputer.target_output: target_outputs,
                         ncomputer.sequence_length: seq_len,
-                        loss_weights: weights
                     })
 
                     last_100_losses.append(loss_value)

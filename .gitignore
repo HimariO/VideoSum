@@ -4,6 +4,7 @@
 *.avi
 *.jpg
 *.png
+*.csv
 
 # tensorboard logs directories
 logs

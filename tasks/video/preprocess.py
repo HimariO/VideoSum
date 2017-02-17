@@ -5,6 +5,7 @@ import numpy as np
 from shutil import rmtree
 from os import listdir, mkdir
 from os.path import join, isfile, isdir, dirname, basename, normpath, abspath, exists
+import csv
 
 def llprint(message):
     sys.stdout.write(message)
@@ -44,7 +45,7 @@ def create_dictionary(files_list):
 
         llprint("\rCreating Dictionary ... %d/%d" % ((indx + 1), len(files_list)))
 
-    print "\rCreating Dictionary ... Done!"
+    print("\rCreating Dictionary ... Done!")
     return lexicons_dict
 
 
@@ -113,79 +114,48 @@ def encode_data(files_list, lexicons_dictionary, length_limit=None):
 
         llprint("\rEncoding Data ... %d/%d" % (indx + 1, len(files_list)))
 
-    print "\rEncoding Data ... Done!"
+    print("\rEncoding Data ... Done!")
     return files, stories_lengths
 
 
+def process_csv(path):
+    data = []
+    dictionary = {}
+
+    with open(path, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            if row['Language'] == 'English':
+                for i in row['Description'].split():
+                    try:
+                        dictionary[i] += 0
+                    except:
+                        dictionary[i] = len(dictionary) + 1
+                data.append(row)
+
+    keys = [
+        'VideoID',
+        'Start',
+        'End',
+        'WorkerID',
+        'Source',
+        'AnnotationTime',
+        'Language',
+        'Description'
+    ]
+
+    with open('MSR_en.csv', 'w') as enfile:
+        writer = csv.DictWriter(enfile, keys)
+        writer.writeheader()
+        writer.writerows(data)
+
+    with open('MSR_en_dict.csv', 'w') as dict_file:
+        writer = csv.DictWriter(dict_file, ['word', 'id'])
+        writer.writeheader()
+
+        for key in dictionary.keys():
+            writer.writerow({'word': key, 'id': dictionary[key]})
+    return
+
 if __name__ == '__main__':
-    task_dir = dirname(abspath(__file__))
-    options,_ = getopt.getopt(sys.argv[1:], '', ['data_dir=', 'single_train', 'length_limit='])
-    data_dir = None
-    joint_train = True
-    length_limit = None
-    files_list = []
-
-    if not exists(join(task_dir, 'data')):
-        mkdir(join(task_dir, 'data'))
-
-    for opt in options:
-        if opt[0] == '--data_dir':
-            data_dir = opt[1]
-        if opt[0] == '--single_train':
-            joint_train = False
-        if opt[0] == '--length_limit':
-            length_limit = int(opt[1])
-
-    if data_dir is None:
-        raise ValueError("data_dir argument cannot be None")
-
-    for entryname in listdir(data_dir):
-        entry_path = join(data_dir, entryname)
-        if isfile(entry_path):
-            files_list.append(entry_path)
-
-    lexicon_dictionary = create_dictionary(files_list)
-    lexicon_count = len(lexicon_dictionary)
-
-    # append used punctuation to dictionary
-    lexicon_dictionary['?'] = lexicon_count
-    lexicon_dictionary['.'] = lexicon_count + 1
-    lexicon_dictionary['-'] = lexicon_count + 2
-
-    encoded_files, stories_lengths = encode_data(files_list, lexicon_dictionary, length_limit)
-
-    stories_lengths = np.array(stories_lengths)
-    length_limit = np.max(stories_lengths) if length_limit is None else length_limit
-    print "Total Number of stories: %d" % (len(stories_lengths))
-    print "Number of stories with lengthes > %d: %d (%% %.2f) [discarded]" % (length_limit, np.sum(stories_lengths > length_limit), np.mean(stories_lengths > length_limit) * 100.0)
-    print "Number of Remaining Stories: %d" % (len(stories_lengths[stories_lengths <= length_limit]))
-
-    processed_data_dir = join(task_dir, 'data', basename(normpath(data_dir)))
-    train_data_dir = join(processed_data_dir, 'train')
-    test_data_dir = join(processed_data_dir, 'test')
-    if exists(processed_data_dir) and isdir(processed_data_dir):
-        rmtree(processed_data_dir)
-
-    mkdir(processed_data_dir)
-    mkdir(train_data_dir)
-    mkdir(test_data_dir)
-
-    llprint("Saving processed data to disk ... ")
-
-    pickle.dump(lexicon_dictionary, open(join(processed_data_dir, 'lexicon-dict.pkl'), 'wb'))
-
-    joint_train_data = []
-
-    for filename in encoded_files:
-        if filename.endswith("test.txt"):
-            pickle.dump(encoded_files[filename], open(join(test_data_dir, basename(filename) + '.pkl'), 'wb'))
-        elif filename.endswith("train.txt"):
-            if not joint_train:
-                pickle.dump(encoded_files[filename], open(join(train_data_dir, basename(filename) + '.pkl'), 'wb'))
-            else:
-                joint_train_data.extend(encoded_files[filename])
-
-    if joint_train:
-        pickle.dump(joint_train_data, open(join(train_data_dir, 'train.pkl'), 'wb'))
-
-    llprint("Done!\n")
+    process_csv('./dataset/MSR.csv')
