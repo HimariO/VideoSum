@@ -1,0 +1,8 @@
+TODO:
+  (V) target output: index > one-hot encode
+  (V) VGG: video input(nparray) reize to 224 * 224 * 3
+  (V) find a new loss function.
+  (V) input_data shape need to become (1, ? 100352) from (?, 1 , 100352)
+  fix sentence2word (deal with \(\) and \"\") >> not necessarl a problem....
+  fix tensorflow departed fucntion
+  TF not running on GPU!

@@ -67,15 +67,15 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(annotation, dictionary):
-    input_vec = load_video(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End']))
+def prepare_sample(annotation, dictionary, get_vid=True):
+    input_vec = np.load('.features.npy')
+    input_vec = input_vec[0]  # only have one video when testing
 
     output_str = annotation['Description'].split()
     output_str = [dictionary[i] for i in output_str]
     seq_len = input_vec.shape[0] + len(output_str) + 1
-    print(len(output_str))
+
     output_str = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)] + [onehot(i, word_space_size) for i in output_str]
-    print(len(output_str))
     output_vec = np.array(output_str, dtype=np.float32)
 
     print(colored('seq_len: ', color='red'), seq_len)
@@ -126,15 +126,11 @@ if __name__ == '__main__':
             start_step = int(opt[1])
 
     graph = tf.Graph()
+
     with graph.as_default():
         with tf.Session(graph=graph) as session:
 
             llprint("Building Computational Graph ... ")
-            llprint("Building VGG ... ")
-
-            vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-            image_holder = tf.placeholder('float32', [1, 224, 224, 3])
-            vgg.build(image_holder)
 
             llprint("Done!")
             llprint("Building DNC ... ")
@@ -207,16 +203,6 @@ if __name__ == '__main__':
                     sample = data[i]
                     video_input, target_outputs, seq_len = prepare_sample(sample, lexicon_dict)
 
-                    print('Getting VGG features...')
-                    input_data = []
-                    for frame in video_input:
-                        f5_3 = session.run([vgg.conv5_3], feed_dict={image_holder: frame})
-                        input_data.append(np.reshape(f5_3, [-1]))
-
-                    for i in range(seq_len - len(input_data)):  # padding
-                        input_data.append(np.zeros([input_size], dtype=np.float32))
-                    input_data = np.array([input_data])
-
                     summerize = (i % 50 == 0)
                     take_checkpoint = (i != 0) and (i % end == 0)
                     print('Feed features into DNC.')
@@ -253,6 +239,7 @@ if __name__ == '__main__':
                         llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
                         llprint("Done!")
+                    break
 
                 except KeyboardInterrupt:
 
