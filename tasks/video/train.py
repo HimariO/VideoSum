@@ -1,5 +1,5 @@
 import warnings
-
+warnings.filterwarnings('ignore')
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -14,28 +14,34 @@ from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
+from termcolor import colored
 
-warnings.filterwarnings('ignore')
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 
 
-def load_video(filepath):
+def load_video(filepath, sample=3):
     clip = VideoFileClip(filepath)
     video = []
+
+    skip = 0
     for frame in clip.iter_frames():
+        skip += 1
+        if skip % sample != 0:
+            continue
+
         img = Image.fromarray(frame)
         img = img.resize((224, 224))
         norm = np.divide(np.array(img), 255)
+        norm = np.reshape(norm, [1, 224, 224, 3])
         video.append(norm)
 
     return np.array(video)
 
 
 def llprint(message):
-    sys.stdout.write(message)
-    sys.stdout.flush()
+    print(colored(message, color='blue'))
 
 
 def load(anno_path, dict_path):
@@ -45,7 +51,7 @@ def load(anno_path, dict_path):
     with open(anno_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            data.append(row)
+            datas.append(row)
 
     with open(dict_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -62,16 +68,21 @@ def onehot(index, size):
 
 
 def prepare_sample(annotation, dictionary):
+    input_vec = load_video(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End']))
+
     output_str = annotation['Description'].split()
     output_str = [dictionary[i] for i in output_str]
-    output_str = [onehot(i) for i in output_str]
-    output_vec = np.array(output_str)
+    seq_len = input_vec.shape[0] + len(output_str) + 1
+    print(len(output_str))
+    output_str = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)] + [onehot(i, word_space_size) for i in output_str]
+    print(len(output_str))
+    output_vec = np.array(output_str, dtype=np.float32)
 
-    input_vec = load_video(video_dir + '%s_%s_%s' % (annotation['VideoID'], annotation['Start'], annotation['End']))
-    seq_len = input_vec.shape[0] + output_vec.shape[0] + 1
-
+    print(colored('seq_len: ', color='red'), seq_len)
+    print(colored('input_vec: ', color='red'), input_vec.shape)
+    print(colored('output_vec: ', color='red'), output_vec.shape)
     return (
-        np.reshape(input_vec, (1, -1, word_space_size)),
+        input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
         seq_len,
     )
@@ -89,7 +100,7 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 1 * 512 * 14 * 14
+    input_size = 1 * 512 * 14 * 14   # 100352
     output_size = len(lexicon_dict)
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
@@ -101,7 +112,7 @@ if __name__ == '__main__':
     momentum = 0.9
 
     from_checkpoint = None
-    iterations = 100000
+    iterations = len(data)
     start_step = 0
 
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start='])
@@ -125,6 +136,7 @@ if __name__ == '__main__':
             image_holder = tf.placeholder('float', [1, 224, 224, 3])
             vgg.build(image_holder)
 
+            llprint("Done!")
             llprint("Building DNC ... ")
 
             optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
@@ -166,17 +178,16 @@ if __name__ == '__main__':
             summerize_op = tf.merge_summary(summeries)
             no_summerize = tf.no_op()
 
-            llprint("Done!\n")
+            llprint("Done!")
 
             llprint("Initializing Variables ... ")
             session.run(tf.initialize_all_variables())
-            llprint("Done!\n")
+            llprint("Done!")
 
             if from_checkpoint is not None:
                 llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
                 ncomputer.restore(session, ckpts_dir, from_checkpoint)
-                llprint("Done!\n")
-
+                llprint("Done!")
 
             last_100_losses = []
 
@@ -192,17 +203,23 @@ if __name__ == '__main__':
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
-                    sample = np.random.choice(data, 1)
+                    # sample = np.random.choice(data, 1)
+                    sample = data[i]
                     video_input, target_outputs, seq_len = prepare_sample(sample, lexicon_dict)
 
+                    print('Getting VGG features...')
                     input_data = []
                     for frame in video_input:
                         f5_3 = session.run([vgg.conv5_3], feed_dict={image_holder: frame})
-                        input_data.append(np.reshape(f5_3, [1, -1]))
-                    input_data = np.array(input_data)
+                        input_data.append(np.reshape(f5_3, [-1]))
+
+                    for i in range(seq_len - len(input_data)):  # padding
+                        input_data.append(np.zeros([input_size], dtype=np.float32))
+                    input_data = np.array([input_data])
 
                     summerize = (i % 100 == 0)
                     take_checkpoint = (i != 0) and (i % end == 0)
+                    print('Feed features into DNC.')
 
                     loss_value, _, summary = session.run([
                         loss,
@@ -218,7 +235,7 @@ if __name__ == '__main__':
                     summerizer.add_summary(summary, i)
 
                     if summerize:
-                        llprint("\n\tAvg. Cross-Entropy: %.7f\n" % (np.mean(last_100_losses)))
+                        llprint("\tAvg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
 
                         end_time_100 = time.time()
                         elapsed_time = (end_time_100 - start_time_100) / 60
@@ -226,20 +243,20 @@ if __name__ == '__main__':
                         avg_100_time += (1. / avg_counter) * (elapsed_time - avg_100_time)
                         estimated_time = (avg_100_time * ((end - i) / 100.)) / 60.
 
-                        print "\tAvg. 100 iterations time: %.2f minutes" % (avg_100_time)
-                        print "\tApprox. time to completion: %.2f hours" % (estimated_time)
+                        print("\tAvg. 100 iterations time: %.2f minutes" % (avg_100_time))
+                        print("\tApprox. time to completion: %.2f hours" % (estimated_time))
 
                         start_time_100 = time.time()
                         last_100_losses = []
 
                     if take_checkpoint:
-                        llprint("\nSaving Checkpoint ... "),
+                        llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
-                        llprint("Done!\n")
+                        llprint("Done!")
 
                 except KeyboardInterrupt:
 
-                    llprint("\nSaving Checkpoint ... "),
+                    llprint("Saving Checkpoint ... "),
                     ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
-                    llprint("Done!\n")
+                    llprint("Done!")
                     sys.exit(0)
