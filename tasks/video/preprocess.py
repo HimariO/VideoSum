@@ -6,6 +6,7 @@ from shutil import rmtree
 from os import listdir, mkdir
 from os.path import join, isfile, isdir, dirname, basename, normpath, abspath, exists
 import csv
+import random
 
 def llprint(message):
     sys.stdout.write(message)
@@ -132,6 +133,7 @@ def process_csv(path):
                     except:
                         dictionary[i] = len(dictionary) + 1
                 data.append(row)
+    random.shuffle(data)
 
     keys = [
         'VideoID',
