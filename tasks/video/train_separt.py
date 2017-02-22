@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings('ignore')
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -8,6 +7,7 @@ import time
 import sys
 import os
 import csv
+import spacy
 
 from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
@@ -21,9 +21,10 @@ dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 lastvideo = {'path': '', 'seq_len': 0, 'features': None, 'video': None}
 skip_vgg = False
+nlp = spacy.load('en')
 
 
-def load_video(filepath, sample=3):
+def load_video(filepath, sample=6):
     clip = VideoFileClip(filepath)
     video = []
 
@@ -83,20 +84,24 @@ def prepare_sample(annotation, dictionary):
         skip_vgg = True
         input_vec = lastvideo['video']
 
-    output_str = annotation['Description'].split()
+    output_str = [i for i in nlp(annotation['Description'])]
     output_str = [dictionary[i] for i in output_str]
     seq_len = input_vec.shape[0] + len(output_str) + 1
 
     output_str = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)] + [onehot(i, word_space_size) for i in output_str]
     output_vec = np.array(output_str, dtype=np.float32)
 
+    mask = np.zeros(seq_len, dtype=np.float32)
+    mask[input_vec.shape[0]:] = 1
+
     print(colored('seq_len: ', color='yellow'), seq_len)
-    print(colored('input_vec: ', color='yellow'), input_vec.shape)
-    print(colored('output_vec: ', color='yellow'), output_vec.shape)
+    # print(colored('input_vec: ', color='yellow'), input_vec.shape)
+    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
         input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
         seq_len,
+        mask
     )
 
 
@@ -151,7 +156,7 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             ncomputer = DNC(
@@ -167,10 +172,10 @@ if __name__ == '__main__':
 
             output, _ = ncomputer.get_outputs()
 
-            # loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
             loss = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             )
 
             summeries = []
@@ -249,6 +254,7 @@ if __name__ == '__main__':
                         ncomputer.input_data: input_data,
                         ncomputer.target_output: target_outputs,
                         ncomputer.sequence_length: seq_len,
+                        loss_weights: mask
                     })
 
                     print(colored('loss: ', color='yellow'), loss_value)

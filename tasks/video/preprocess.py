@@ -7,6 +7,7 @@ from os import listdir, mkdir
 from os.path import join, isfile, isdir, dirname, basename, normpath, abspath, exists
 import csv
 import random
+import spacy
 
 def llprint(message):
     sys.stdout.write(message)
@@ -121,17 +122,19 @@ def encode_data(files_list, lexicons_dictionary, length_limit=None):
 
 def process_csv(path):
     data = []
-    dictionary = {}
+    dictionary = {'<EOS>': 0}
+    nlp = spacy.load('en')
 
     with open(path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             if row['Language'] == 'English':
-                for i in row['Description'].split():
+                for i in nlp(row['Description']):
                     try:
                         dictionary[i] += 0
                     except:
                         dictionary[i] = len(dictionary) + 1
+                row['Description'] += ' <EOS>'
                 data.append(row)
     random.shuffle(data)
 
