@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings('ignore')
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -8,6 +7,7 @@ import time
 import sys
 import os
 import csv
+import spacy
 
 from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
@@ -15,13 +15,18 @@ from recurrent_controller import RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
+import ROUGE_L as rouge
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
+lastvideo = {'path': '', 'seq_len': 0, 'features': None, 'video': None}
+skip_vgg = False
+nlp = spacy.load('en')
+r1 = rouge.ROUGE_L(0.8, 0.2, 15, 0.01)
 
 
-def load_video(filepath, sample=3):
+def load_video(filepath, sample=6):
     clip = VideoFileClip(filepath)
     video = []
 
@@ -68,25 +73,51 @@ def onehot(index, size):
 
 
 def prepare_sample(annotation, dictionary):
-    input_vec = load_video(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End']))
+    file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
+    if lastvideo['path'] != file_path:
+        if os.path.isfile(file_path):
+            input_vec = load_video(file_path)
+            lastvideo['path'] = file_path
+            lastvideo['video'] = input_vec
+            skip_vgg = False
+        else:
+            raise OSError(2, 'No such file or directory', file_path)
+    else:
+        skip_vgg = True
+        input_vec = lastvideo['video']
 
-    output_str = annotation['Description'].split()
+    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['<EOS>']
     output_str = [dictionary[i] for i in output_str]
     seq_len = input_vec.shape[0] + len(output_str) + 1
-    print(len(output_str))
+
     output_str = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)] + [onehot(i, word_space_size) for i in output_str]
-    print(len(output_str))
     output_vec = np.array(output_str, dtype=np.float32)
 
-    print(colored('seq_len: ', color='red'), seq_len)
-    print(colored('input_vec: ', color='red'), input_vec.shape)
-    print(colored('output_vec: ', color='red'), output_vec.shape)
+    mask = np.zeros(seq_len, dtype=np.float32)
+    mask[input_vec.shape[0]:] = 1
+
+    print(colored('seq_len: ', color='yellow'), seq_len)
+    # print(colored('input_vec: ', color='yellow'), input_vec.shape)
+    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
         input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
         seq_len,
+        np.reshape(mask, (1, -1, 1))
     )
 
+def vec2word(vec, wmap):
+    sentence_output = ''
+    N = vec.shape[1]
+
+    for word in [vec[:, i, :] for i in range(N)]:
+        index = np.argmax(word)
+        try:
+            sentence_output += wmap[index] + ' '
+        except:
+            print('Cant find in dictionary! ', index)
+
+    return sentence_output
 
 if __name__ == '__main__':
 
@@ -97,10 +128,12 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
     data, lexicon_dict = load(anno_file, dict_file)
+    word_map = ['' for i in range(len(lexicon_dict) + 1)]
+
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 1 * 512 * 14 * 14   # 100352
+    input_size = 4096
     output_size = len(lexicon_dict)
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
@@ -139,7 +172,7 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             ncomputer = DNC(
@@ -154,16 +187,15 @@ if __name__ == '__main__':
             )
 
             output, _ = ncomputer.get_outputs()
+            softmax_output = tf.nn.softmax(output)
 
-            # loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            loss = tf.placeholder(tf.float32, [1])
             # output tensors will containing all output from both input steps and output steps.
-            loss = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
-            )
 
             summeries = []
 
-            gradients = optimizer.compute_gradients(loss)
+            # gradients = optimizer.compute_gradients(loss)
+            gradients = tf.gradients(loss, )
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
                     gradients[i] = (tf.clip_by_value(grad, -10, 10), var)
@@ -192,7 +224,7 @@ if __name__ == '__main__':
             last_100_losses = []
 
             start = 0 if start_step == 0 else start_step + 1
-            end = start_step + iterations + 1
+            end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
 
             start_time_100 = time.time()
             end_time_100 = None
@@ -205,25 +237,35 @@ if __name__ == '__main__':
 
                     # sample = np.random.choice(data, 1)
                     sample = data[i]
-                    video_input, target_outputs, seq_len = prepare_sample(sample, lexicon_dict)
+                    try:
+                        video_input, target_outputs, seq_len, mask = prepare_sample(sample, lexicon_dict)
+                    except OSError:
+                        print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % sample['VideoID'])
+                        continue
+                    except KeyError:
+                        print(colored('Error: ', color='red'), 'Annotation %s containing some word not exist in dictionary!' % sample['VideoID'])
+                        continue
 
                     print('Getting VGG features...')
+
                     input_data = []
-                    for frame in video_input:
-                        f5_3 = session.run([vgg.conv5_3], feed_dict={image_holder: frame})
-                        input_data.append(np.reshape(f5_3, [-1]))
+                    if not skip_vgg:
+                        for frame in video_input:
+                            fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
+                            input_data.append(np.reshape(fc6, [-1]))
 
-                    for i in range(seq_len - len(input_data)):  # padding
-                        input_data.append(np.zeros([input_size], dtype=np.float32))
-                    input_data = np.array([input_data])
+                        for j in range(seq_len - len(input_data)):  # padding
+                            input_data.append(np.zeros([input_size], dtype=np.float32))
+                        lastvideo['features'] = input_data = np.array([input_data])
+                    else:
+                        input_data = lastvideo['features']
 
-                    summerize = (i % 50 == 0)
-                    take_checkpoint = (i != 0) and (i % end == 0)
+                    summerize = (i % 100 == 0)
+                    take_checkpoint = (i != 0) and (i % 200 == 0)
                     print('Feed features into DNC.')
 
-                    loss_value, _, summary = session.run([
-                        loss,
-                        apply_gradients,
+                    step_output, summary = session.run([
+                        softmax_output,
                         summerize_op if summerize else no_summerize
                     ], feed_dict={
                         ncomputer.input_data: input_data,
@@ -231,11 +273,28 @@ if __name__ == '__main__':
                         ncomputer.sequence_length: seq_len,
                     })
 
-                    last_100_losses.append(loss_value)
+                    step_output = step_output[0]
+                    sentence = vec2word(step_output, lexicon_dict)
+
+                    print(sentence, '>>')
+                    print(sample['Description'])
+                    r1.set_inputs(sentence)
+                    r1.set_targes(sample['Description'])
+                    loss_score = r1.Caculate_ROUGE_L()
+
+                    print(colored('loss: ', color='yellow'), loss_score)
+                    last_100_losses.append(loss_score)
                     summerizer.add_summary(summary, i)
 
+                    session.run([
+                        apply_gradients
+                    ], feed_dict={
+                        loss: loss_score
+                    })
+
                     if summerize:
-                        llprint("\tAvg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
+                        llprint("   Avg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
+                        llprint("   Max. %.7f  Min. %.7f" % (max(last_100_losses), min(last_100_losses)))
 
                         end_time_100 = time.time()
                         elapsed_time = (end_time_100 - start_time_100) / 60
@@ -243,8 +302,8 @@ if __name__ == '__main__':
                         avg_100_time += (1. / avg_counter) * (elapsed_time - avg_100_time)
                         estimated_time = (avg_100_time * ((end - i) / 100.)) / 60.
 
-                        print("\tAvg. 100 iterations time: %.2f minutes" % (avg_100_time))
-                        print("\tApprox. time to completion: %.2f hours" % (estimated_time))
+                        print("Avg. 100 iterations time: %.2f minutes" % (avg_100_time))
+                        print("Approx. time to completion: %.2f hours" % (estimated_time))
 
                         start_time_100 = time.time()
                         last_100_losses = []

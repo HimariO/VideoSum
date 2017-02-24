@@ -10,7 +10,7 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 import csv
 
-def load_video(filepath, sample=3):
+def load_video(filepath, sample=6):
     clip = VideoFileClip(filepath)
     video = []
 
@@ -52,7 +52,7 @@ with tf.Session() as sess:
 
             feat = []
             for f in frames:
-                f5_3 = sess.run([vgg.conv5_3], feed_dict={image_holder: f})
+                f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
                 feat.append(f5_3)
 
             print('frame count %d' % len(feat))
@@ -63,4 +63,4 @@ with tf.Session() as sess:
 
 print('Start Saving...')
 feats = np.array(feats)
-np.save('.features.npy', feats)
+np.save('features.npy', feats)

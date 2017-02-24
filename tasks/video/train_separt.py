@@ -84,7 +84,7 @@ def prepare_sample(annotation, dictionary):
         skip_vgg = True
         input_vec = lastvideo['video']
 
-    output_str = [i for i in nlp(annotation['Description'])]
+    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['<EOS>']
     output_str = [dictionary[i] for i in output_str]
     seq_len = input_vec.shape[0] + len(output_str) + 1
 
@@ -101,7 +101,7 @@ def prepare_sample(annotation, dictionary):
         input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
         seq_len,
-        mask
+        np.reshape(mask, (1, -1, 1))
     )
 
 
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 4096  # 100352
+    input_size = 4096
     output_size = len(lexicon_dict)
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
@@ -125,7 +125,7 @@ if __name__ == '__main__':
     word_size = 64
     read_heads = 4
 
-    learning_rate = 1e-5
+    learning_rate = 1e-4
     momentum = 0.9
 
     from_checkpoint = None
@@ -223,9 +223,12 @@ if __name__ == '__main__':
                     # sample = np.random.choice(data, 1)
                     sample = data[i]
                     try:
-                        video_input, target_outputs, seq_len = prepare_sample(sample, lexicon_dict)
-                    except:
+                        video_input, target_outputs, seq_len, mask = prepare_sample(sample, lexicon_dict)
+                    except OSError:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % sample['VideoID'])
+                        continue
+                    except KeyError:
+                        print(colored('Error: ', color='red'), 'Annotation %s containing some word not exist in dictionary!' % sample['VideoID'])
                         continue
 
                     print('Getting VGG features...')
@@ -263,6 +266,7 @@ if __name__ == '__main__':
 
                     if summerize:
                         llprint("   Avg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
+                        llprint("   Max. %.7f  Min. %.7f" % (max(last_100_losses), min(last_100_losses)))
 
                         end_time_100 = time.time()
                         elapsed_time = (end_time_100 - start_time_100) / 60

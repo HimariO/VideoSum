@@ -122,7 +122,7 @@ def encode_data(files_list, lexicons_dictionary, length_limit=None):
 
 def process_csv(path):
     data = []
-    dictionary = {'<EOS>': 0}
+    dictionary = {'<EOS>': 1}
     nlp = spacy.load('en')
 
     with open(path, newline='') as csvfile:
@@ -131,9 +131,9 @@ def process_csv(path):
             if row['Language'] == 'English':
                 for i in nlp(row['Description']):
                     try:
-                        dictionary[i] += 0
+                        dictionary[str(i)] += 0
                     except:
-                        dictionary[i] = len(dictionary) + 1
+                        dictionary[str(i)] = len(dictionary) + 1
                 row['Description'] += ' <EOS>'
                 data.append(row)
     random.shuffle(data)

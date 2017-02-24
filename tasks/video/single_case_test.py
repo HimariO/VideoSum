@@ -176,10 +176,10 @@ if __name__ == '__main__':
                 })
 
                 sentence_output = ''
-                word_map = ['' for i in range(len(lexicon_dict))]
+                word_map = ['' for i in range(len(lexicon_dict) + 1)]
                 for word in lexicon_dict.keys():
                     ind = lexicon_dict[word]
-                    word_map[ind - 1] = word
+                    word_map[ind] = word
 
                 step_output = step_output[0]  # shape (1, n+30, 21866)
                 N = step_output.shape[1]
@@ -190,7 +190,7 @@ if __name__ == '__main__':
                 for word in [step_output[:, i, :] for i in range(N)]:
                     index = np.argmax(word)
                     try:
-                        sentence_output += word_map[index - 1] + ' '
+                        sentence_output += word_map[index] + ' '
                     except:
                         print('Cant find in dictionary! ', index)
 
