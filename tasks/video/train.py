@@ -8,6 +8,7 @@ import sys
 import os
 import csv
 import spacy
+import re
 
 from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
@@ -15,15 +16,11 @@ from recurrent_controller import RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
-import ROUGE_L as rouge
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
-lastvideo = {'path': '', 'seq_len': 0, 'features': None, 'video': None}
-skip_vgg = False
 nlp = spacy.load('en')
-r1 = rouge.ROUGE_L(0.8, 0.2, 15, 0.01)
 
 
 def load_video(filepath, sample=6):
@@ -68,23 +65,21 @@ def load(anno_path, dict_path):
 
 def onehot(index, size):
     vec = np.zeros(size, dtype=np.float32)
+    index = index if index < size else size
     vec[index] = 1.0
     return vec
 
 
-def prepare_sample(annotation, dictionary):
+def prepare_sample(annotation, dictionary, video_feature):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
-    if lastvideo['path'] != file_path:
-        if os.path.isfile(file_path):
-            input_vec = load_video(file_path)
-            lastvideo['path'] = file_path
-            lastvideo['video'] = input_vec
-            skip_vgg = False
-        else:
-            raise OSError(2, 'No such file or directory', file_path)
+    if not os.path.isfile(file_path) or video_feature == 0 or video_feature == [0]:  # some video in annotation does not include in dataset.
+        raise OSError(2, 'No such file or directory', file_path)
+
+    if type(video_feature) is list:
+        video_feature = [np.reshape(i, [-1]) for i in video_feature]
+        input_vec = np.array(video_feature)
     else:
-        skip_vgg = True
-        input_vec = lastvideo['video']
+        input_vec = video_feature
 
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['<EOS>']
     output_str = [dictionary[i] for i in output_str]
@@ -96,6 +91,9 @@ def prepare_sample(annotation, dictionary):
     mask = np.zeros(seq_len, dtype=np.float32)
     mask[input_vec.shape[0]:] = 1
 
+    padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
+    input_vec = np.concatenate([input_vec, padding_i], axis=0)
+
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
     # print(colored('output_vec: ', color='yellow'), output_vec.shape)
@@ -106,18 +104,6 @@ def prepare_sample(annotation, dictionary):
         np.reshape(mask, (1, -1, 1))
     )
 
-def vec2word(vec, wmap):
-    sentence_output = ''
-    N = vec.shape[1]
-
-    for word in [vec[:, i, :] for i in range(N)]:
-        index = np.argmax(word)
-        try:
-            sentence_output += wmap[index] + ' '
-        except:
-            print('Cant find in dictionary! ', index)
-
-    return sentence_output
 
 if __name__ == '__main__':
 
@@ -126,10 +112,15 @@ if __name__ == '__main__':
     data_dir = os.path.join(dirname, 'data', 'en-10k')
     tb_logs_dir = os.path.join(dirname, 'logs')
 
+    feat_files = [re.match('features_(\d+)_(\d+)\.npy', f) for f in os.listdir(path='./dataset/')]
+    feat_files_tup = []
+    for f in feat_files:
+        if f is not None:
+            feat_files_tup.append((f.string, int(f.group(1)), int(f.group(2))))  # (file_name, start_id, end_id)
+    feat_files_tup.sort(key=lambda x: x[1])  # sort by start data id.
+
     llprint("Loading Data ... ")
     data, lexicon_dict = load(anno_file, dict_file)
-    word_map = ['' for i in range(len(lexicon_dict) + 1)]
-
     llprint("Done!\n")
 
     batch_size = 1
@@ -146,9 +137,18 @@ if __name__ == '__main__':
 
     from_checkpoint = None
     iterations = len(data)
-    start_step = 0
+    start_step = 1
+
+    last_sum = 1
+    last_log = 1
+    mis_data_offset = 0
 
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start='])
+
+    """
+    If need to resume training from checkpoint, you must start form iteration which have same step with one of npy sample's start file.
+    due to teh fact that sample in the middle of file have unknow ID(start + miss_data_num), after program restarting with 0 miss_data_num.
+    """
 
     for opt in options:
         if opt[0] == '--checkpoint':
@@ -156,23 +156,23 @@ if __name__ == '__main__':
         elif opt[0] == '--iterations':
             iterations = int(opt[1])
         elif opt[0] == '--start':
-            start_step = int(opt[1])
+            last_sum = last_log = start_step = int(opt[1])
 
     graph = tf.Graph()
     with graph.as_default():
         with tf.Session(graph=graph) as session:
 
             llprint("Building Computational Graph ... ")
-            llprint("Building VGG ... ")
-
-            vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-            image_holder = tf.placeholder('float32', [1, 224, 224, 3])
-            vgg.build(image_holder)
+            # llprint("Building VGG ... ")
+            #
+            # vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
+            # image_holder = tf.placeholder('float32', [1, 224, 224, 3])
+            # vgg.build(image_holder)
 
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.AdamOptimizer(learning_rate)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             ncomputer = DNC(
@@ -187,15 +187,16 @@ if __name__ == '__main__':
             )
 
             output, _ = ncomputer.get_outputs()
-            softmax_output = tf.nn.softmax(output)
 
-            loss = tf.placeholder(tf.float32, [1])
+            loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
+            loss = tf.reduce_mean(
+                loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+            )
 
             summeries = []
 
-            # gradients = optimizer.compute_gradients(loss)
-            gradients = tf.gradients(loss, )
+            gradients = optimizer.compute_gradients(loss)
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
                     gradients[i] = (tf.clip_by_value(grad, -10, 10), var)
@@ -231,68 +232,90 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            for i in range(start, end + 1):
+            current_feat = (None, -1, -1)  # [npy, start_id, end_id]
+            input_data = target_outputs = seq_len = mask = None
+            included_vid = 0
+            seq_reapte = 5
+
+            # i = start
+            for i in range(start, end):
+                if current_feat is None or current_feat[1] > i or current_feat[2] < i:
+                    for f in feat_files_tup:
+                        if f[1] <= i and f[2] >= i:
+                            llprint('Loading %s...' % f[0])
+                            current_feat = np.load('./dataset/' + f[0]), f[1], f[2]
+                            mis_data_offset = 0
+                            # i = f[1]
+                            break
+                        else:
+                            current_feat = (None, -1, -1)
+                    if current_feat == (None, -1, -1):  # if no data are aliviable.
+                        print('Cant find suitable data for tarining.')
+                        sys.exit(0)
+
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
                     # sample = np.random.choice(data, 1)
                     sample = data[i]
+                    video_feat = current_feat[0][i - current_feat[1]]
                     try:
-                        video_input, target_outputs, seq_len, mask = prepare_sample(sample, lexicon_dict)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat)
+
+                        input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
+                        target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
+                        seq_len = seq_len + seq_len_ if seq_len is not None else seq_len_
+                        mask = np.concatenate([mask, mask_], axis=1) if mask is not None else mask_
+                        included_vid += 1
+
+                        # i += 1
+                        if included_vid < 5:
+                            continue
+                        else:
+                            included_vid = 0
                     except OSError:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % sample['VideoID'])
+                        # mis_data_offset += 1
+                        # i += 1
                         continue
                     except KeyError:
                         print(colored('Error: ', color='red'), 'Annotation %s containing some word not exist in dictionary!' % sample['VideoID'])
+                        # mis_data_offset += 1
+                        # i += 1
                         continue
-
-                    print('Getting VGG features...')
-
-                    input_data = []
-                    if not skip_vgg:
-                        for frame in video_input:
-                            fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
-                            input_data.append(np.reshape(fc6, [-1]))
-
-                        for j in range(seq_len - len(input_data)):  # padding
-                            input_data.append(np.zeros([input_size], dtype=np.float32))
-                        lastvideo['features'] = input_data = np.array([input_data])
-                    else:
-                        input_data = lastvideo['features']
 
                     summerize = (i % 100 == 0)
                     take_checkpoint = (i != 0) and (i % 200 == 0)
                     print('Feed features into DNC.')
 
-                    step_output, summary = session.run([
-                        softmax_output,
-                        summerize_op if summerize else no_summerize
-                    ], feed_dict={
-                        ncomputer.input_data: input_data,
-                        ncomputer.target_output: target_outputs,
-                        ncomputer.sequence_length: seq_len,
-                    })
+                    # reapeating same input for 'seq_reapte' times.
+                    # for n in range(seq_reapte):
+                    first_loss = None
+                    n = 0
+                    while True:
+                        loss_value, _, summary = session.run([
+                            loss,
+                            apply_gradients,
+                            summerize_op if summerize else no_summerize
+                        ], feed_dict={
+                            ncomputer.input_data: np.array([input_data]),
+                            ncomputer.target_output: target_outputs,
+                            ncomputer.sequence_length: seq_len,
+                            loss_weights: mask
+                        })
 
-                    step_output = step_output[0]
-                    sentence = vec2word(step_output, lexicon_dict)
+                        print(colored('loss: ', color='yellow'), loss_value)
+                        n += 1
+                        if first_loss is None:
+                            first_loss = loss_value
+                        elif loss_value < first_loss and n >= seq_reapte:
+                            break
 
-                    print(sentence, '>>')
-                    print(sample['Description'])
-                    r1.set_inputs(sentence)
-                    r1.set_targes(sample['Description'])
-                    loss_score = r1.Caculate_ROUGE_L()
-
-                    print(colored('loss: ', color='yellow'), loss_score)
-                    last_100_losses.append(loss_score)
+                    last_100_losses.append(loss_value)
                     summerizer.add_summary(summary, i)
 
-                    session.run([
-                        apply_gradients
-                    ], feed_dict={
-                        loss: loss_score
-                    })
-
-                    if summerize:
+                    if i - last_sum >= 100:
+                        last_sum = i
                         llprint("   Avg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
                         llprint("   Max. %.7f  Min. %.7f" % (max(last_100_losses), min(last_100_losses)))
 
@@ -308,10 +331,13 @@ if __name__ == '__main__':
                         start_time_100 = time.time()
                         last_100_losses = []
 
-                    if take_checkpoint:
+                    if i - last_log >= 200:
+                        last_log = i
                         llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
                         llprint("Done!")
+
+                    input_data = target_outputs = seq_len = mask = None  # reset for next group of data.
 
                 except KeyboardInterrupt:
 

@@ -66,6 +66,7 @@ def load(anno_path, dict_path):
 
 def onehot(index, size):
     vec = np.zeros(size, dtype=np.float32)
+    index = index if index < size else size
     vec[index] = 1.0
     return vec
 
@@ -254,7 +255,7 @@ if __name__ == '__main__':
                         apply_gradients,
                         summerize_op if summerize else no_summerize
                     ], feed_dict={
-                        ncomputer.input_data: input_data,
+                        ncomputer.input_data: input_data * 2,
                         ncomputer.target_output: target_outputs,
                         ncomputer.sequence_length: seq_len,
                         loss_weights: mask

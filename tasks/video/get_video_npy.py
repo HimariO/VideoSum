@@ -39,6 +39,13 @@ with open('./dataset/MSR_en.csv', newline='') as csvfile:
 
 feats = []
 
+start = 4801
+end = 20000
+end = end if end < len(datas) else len(datas)
+datas = datas[start:end]
+
+num_per_file = 200
+
 with tf.Session() as sess:
     vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
     image_holder = tf.placeholder('float', [1, 224, 224, 3])
@@ -46,7 +53,7 @@ with tf.Session() as sess:
 
     for annotation, ind in zip(datas, range(len(datas))):
 
-        try:
+        if os.path.isfile(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])):
             path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
             frames = load_video(path)
 
@@ -55,12 +62,14 @@ with tf.Session() as sess:
                 f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
                 feat.append(f5_3)
 
-            print('frame count %d' % len(feat))
+            print('%d / %d' % (start + ind, end))
             feats.append(feat)
-        except:
+        else:
+            feats.append([0])
             print(colored('error', color='red'))
-        break  # one time only
-
-print('Start Saving...')
-feats = np.array(feats)
-np.save('features.npy', feats)
+        # break  # one time only
+        if ind % num_per_file == 0 and ind != start:
+            feats = np.array(feats)
+            print('Start Saving...')
+            np.save('dataset/features_%d_%d.npy' % (start + ind - num_per_file, start + ind - 1), feats)
+            feats = []

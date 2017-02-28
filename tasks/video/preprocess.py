@@ -129,6 +129,7 @@ def process_csv(path):
         reader = csv.DictReader(csvfile)
         for row in reader:
             if row['Language'] == 'English':
+                row['Description'] = row['Description'].lower()
                 for i in nlp(row['Description']):
                     try:
                         dictionary[str(i)] += 0

@@ -67,7 +67,7 @@ def onehot(index, size):
 
 
 if __name__ == '__main__':
-
+    tf.logging.set_verbosity(tf.logging.ERROR)
     dirname = os.path.dirname(__file__)
     ckpts_dir = os.path.join(dirname, 'checkpoints')
     data_dir = os.path.join(dirname, 'data', 'en-10k')
@@ -88,7 +88,7 @@ if __name__ == '__main__':
 
     learning_rate = 1e-5
     momentum = 0.9
-    output_len = 30
+    output_len = 50
 
     from_checkpoint = None
     video_file = ''
@@ -175,22 +175,25 @@ if __name__ == '__main__':
                     ncomputer.sequence_length: seq_len,
                 })
 
-                sentence_output = ''
                 word_map = ['' for i in range(len(lexicon_dict) + 1)]
                 for word in lexicon_dict.keys():
                     ind = lexicon_dict[word]
                     word_map[ind] = word
 
+                sentence_output = ''
+                last_word = ''
                 step_output = step_output[0]  # shape (1, n+30, 21866)
                 N = step_output.shape[1]
 
-                print(step_output.shape)
-                print(step_output)
+                # print(step_output.shape)
+                # print(step_output)
 
                 for word in [step_output[:, i, :] for i in range(N)]:
                     index = np.argmax(word)
                     try:
-                        sentence_output += word_map[index] + ' '
+                        if word_map[index] != last_word:
+                            sentence_output += word_map[index] + ' '
+                        last_word = word_map[index]
                     except:
                         print('Cant find in dictionary! ', index)
 
