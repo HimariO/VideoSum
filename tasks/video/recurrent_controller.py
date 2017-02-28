@@ -23,3 +23,23 @@ class RecurrentController(BaseController):
 
     def update_state(self, new_state):
         return tf.no_op()
+
+
+class L2RecurrentController(BaseController):
+
+    def network_vars(self):
+        self.layer = 2
+        self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
+        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
+
+        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+
+    def network_op(self, X, state):
+        X = tf.convert_to_tensor(X)
+        return self.stack_lstm(X, state)
+
+    def get_state(self):
+        return self.state
+
+    def update_state(self, new_state):
+        return tf.no_op()

@@ -12,7 +12,7 @@ import re
 
 from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
-from recurrent_controller import RecurrentController
+from recurrent_controller import RecurrentController, L2RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
@@ -137,7 +137,7 @@ if __name__ == '__main__':
 
     from_checkpoint = None
     iterations = len(data)
-    start_step = 1
+    start_step = 0
 
     last_sum = 1
     last_log = 1
@@ -176,7 +176,7 @@ if __name__ == '__main__':
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             ncomputer = DNC(
-                RecurrentController,
+                L2RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -235,7 +235,7 @@ if __name__ == '__main__':
             current_feat = (None, -1, -1)  # [npy, start_id, end_id]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
-            seq_reapte = 5
+            seq_reapte = 4
 
             # i = start
             for i in range(start, end):
@@ -308,7 +308,7 @@ if __name__ == '__main__':
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
-                        elif loss_value < first_loss and n >= seq_reapte:
+                        elif loss_value < first_loss * 0.99 and n >= seq_reapte:
                             break
 
                     last_100_losses.append(loss_value)
