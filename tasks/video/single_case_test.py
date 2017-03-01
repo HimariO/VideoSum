@@ -10,10 +10,11 @@ import csv
 
 from dnc.dnc import DNC
 from VGG.vgg19 import Vgg19
-from recurrent_controller import RecurrentController
+from recurrent_controller import RecurrentController, L2RecurrentController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
+from tensorflow.python import debug as tf_db
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
@@ -91,18 +92,22 @@ if __name__ == '__main__':
     output_len = 50
 
     from_checkpoint = None
-    video_file = ''
+    is_debug = ''
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'video='])
 
     for opt in options:
         if opt[0] == '--checkpoint':
             from_checkpoint = opt[1]
-        elif opt[0] == '--video':
-            video_file = opt[1]
+        elif opt[0] == '--debug':
+            lowerc = opt[1].lower()
+            is_debug = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
     with graph.as_default():
         with tf.Session(graph=graph) as session:
+            if is_debug:
+                session = tf_db.LocalCLIDebugWrapperSession(session)
+                print(colored('Wrapping session with tfDebugger.', on_color='on_red'))
 
             llprint("Building Computational Graph ... ")
             llprint("Building VGG ... ")
@@ -115,7 +120,7 @@ if __name__ == '__main__':
             llprint("Building DNC ... ")
 
             ncomputer = DNC(
-                RecurrentController,
+                L2RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -146,60 +151,65 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            try:
+            samples = np.random.choice(data, 5)
+            videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
+            vid_targets = [f['Description'] for f in samples]
 
-                # sample = np.random.choice(data, 1)
+            for test_file, target in zip(videos, vid_targets):
                 try:
-                    video_input = load_video(video_file)
-                    seq_len = len(video_input) + output_len
-                except:
-                    print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % video_file)
-                    sys.exit(0)
-
-                print('Getting VGG features...')
-                input_data = []
-                for frame in video_input:
-                    fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
-                    input_data.append(np.reshape(fc6, [-1]))
-
-                for j in range(seq_len - len(input_data)):  # padding
-                    input_data.append(np.zeros([input_size], dtype=np.float32))
-                input_data = np.array([input_data])
-
-                print('Feed features into DNC.')
-
-                step_output = session.run([
-                    softmax_output,
-                ], feed_dict={
-                    ncomputer.input_data: input_data,
-                    ncomputer.sequence_length: seq_len,
-                })
-
-                word_map = ['' for i in range(len(lexicon_dict) + 1)]
-                for word in lexicon_dict.keys():
-                    ind = lexicon_dict[word]
-                    word_map[ind] = word
-
-                sentence_output = ''
-                last_word = ''
-                step_output = step_output[0]  # shape (1, n+30, 21866)
-                N = step_output.shape[1]
-
-                # print(step_output.shape)
-                # print(step_output)
-
-                for word in [step_output[:, i, :] for i in range(N)]:
-                    index = np.argmax(word)
                     try:
-                        if word_map[index] != last_word:
-                            sentence_output += word_map[index] + ' '
-                        last_word = word_map[index]
+                        video_input = load_video(video_dir + test_file)
+                        seq_len = len(video_input) + output_len
                     except:
-                        print('Cant find in dictionary! ', index)
+                        print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % video_file)
+                        sys.exit(0)
 
-                print(colored('DCN: ', color='green'), sentence_output)
+                    print('Getting VGG features...')
+                    input_data = []
+                    for frame in video_input:
+                        fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
+                        input_data.append(np.reshape(fc6, [-1]))
 
-            except KeyboardInterrupt:
+                    for j in range(seq_len - len(input_data)):  # padding
+                        input_data.append(np.zeros([input_size], dtype=np.float32))
+                    input_data = np.array([input_data])
 
-                llprint("Done!")
-                sys.exit(0)
+                    print('Feed features into DNC.')
+
+                    step_output = session.run([
+                        softmax_output,
+                    ], feed_dict={
+                        ncomputer.input_data: input_data,
+                        ncomputer.sequence_length: seq_len,
+                    })
+
+                    word_map = ['' for i in range(len(lexicon_dict) + 1)]
+                    for word in lexicon_dict.keys():
+                        ind = lexicon_dict[word]
+                        word_map[ind] = word
+
+                    sentence_output = ''
+                    last_word = ''
+                    step_output = step_output[0]  # shape (1, n+30, 21866)
+                    N = step_output.shape[1]
+
+                    # print(step_output.shape)
+                    # print(step_output)
+
+                    for word in [step_output[:, i, :] for i in range(N)]:
+                        index = np.argmax(word)
+                        try:
+                            if word_map[index] != last_word:
+                                sentence_output += word_map[index] + ' '
+                            last_word = word_map[index]
+                        except:
+                            print('Cant find in dictionary! ', index)
+
+                    print(colored('Target: ', color='cyan',), target)
+                    print(colored('DCN: ', color='green'), sentence_output)
+                    print('')
+
+                except KeyboardInterrupt:
+
+                    llprint("Done!")
+                    sys.exit(0)

@@ -70,16 +70,17 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(annotation, dictionary, video_feature):
+def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
-    if not os.path.isfile(file_path) or video_feature == 0 or video_feature == [0]:  # some video in annotation does not include in dataset.
+    # some video in annotation does not include in dataset.
+    if not os.path.isfile(file_path):
         raise OSError(2, 'No such file or directory', file_path)
+    elif type(video_feat) is not np.ndarray:
+        if video_feature == 0 or video_feature == [0]:
+            raise OSError(2, 'Empty data slot!', file_path)
 
-    if type(video_feature) is list:
-        video_feature = [np.reshape(i, [-1]) for i in video_feature]
-        input_vec = np.array(video_feature)
-    else:
-        input_vec = video_feature
+    video_feature = [np.reshape(i, [-1]) for i in video_feature]
+    input_vec = np.array(video_feature[::redu_sample_rate])
 
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['<EOS>']
     output_str = [dictionary[i] for i in output_str]
@@ -129,7 +130,7 @@ if __name__ == '__main__':
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
     words_count = 256
-    word_size = 64
+    word_size = 128
     read_heads = 4
 
     learning_rate = 1e-4
@@ -235,7 +236,7 @@ if __name__ == '__main__':
             current_feat = (None, -1, -1)  # [npy, start_id, end_id]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
-            seq_reapte = 4
+            seq_reapte = 3
 
             # i = start
             for i in range(start, end):
@@ -260,7 +261,7 @@ if __name__ == '__main__':
                     sample = data[i]
                     video_feat = current_feat[0][i - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -269,7 +270,7 @@ if __name__ == '__main__':
                         included_vid += 1
 
                         # i += 1
-                        if included_vid < 5:
+                        if included_vid < 10:
                             continue
                         else:
                             included_vid = 0
@@ -308,7 +309,7 @@ if __name__ == '__main__':
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
-                        elif loss_value < first_loss * 0.99 and n >= seq_reapte:
+                        elif (loss_value < first_loss and n >= seq_reapte) or n >= seq_reapte * 10:
                             break
 
                     last_100_losses.append(loss_value)
