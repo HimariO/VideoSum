@@ -21,7 +21,7 @@ dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 
 
-def load_video(filepath, sample=3):
+def load_video(filepath, sample=12):
     clip = VideoFileClip(filepath)
     video = []
 
@@ -72,7 +72,7 @@ if __name__ == '__main__':
     dirname = os.path.dirname(__file__)
     ckpts_dir = os.path.join(dirname, 'checkpoints')
     data_dir = os.path.join(dirname, 'data', 'en-10k')
-    tb_logs_dir = os.path.join(dirname, 'logs')
+    tb_logs_dir = os.path.join(dirname, 'test_logs')
 
     llprint("Loading Data ... ")
     data, lexicon_dict = load(anno_file, dict_file)
@@ -84,7 +84,7 @@ if __name__ == '__main__':
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
     words_count = 256
-    word_size = 64
+    word_size = 128
     read_heads = 4
 
     learning_rate = 1e-5
@@ -130,8 +130,14 @@ if __name__ == '__main__':
                 batch_size
             )
 
-            output, _ = ncomputer.get_outputs()
+            summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
+            summaries = []
+
+            output, memory_view = ncomputer.get_outputs()
             softmax_output = tf.nn.softmax(output)
+            # for m in memory_view.keys():
+            #     summaries.append(tf.summary.image(m, memory_view[m]))
+            # summerize_op = tf.summary.merge(summaries)
 
             llprint("Done!")
 
@@ -151,14 +157,15 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            samples = np.random.choice(data, 5)
+            samples = np.random.choice(data, 1)
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
 
-            for test_file, target in zip(videos, vid_targets):
+            for test_file, target in zip(['Ugb_uH72d0I_8_17.avi'], vid_targets):
                 try:
                     try:
                         video_input = load_video(video_dir + test_file)
+                        print(colored('frame count: ', color='yellow'), len(video_input))
                         seq_len = len(video_input) + output_len
                     except:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % video_file)
@@ -174,10 +181,12 @@ if __name__ == '__main__':
                         input_data.append(np.zeros([input_size], dtype=np.float32))
                     input_data = np.array([input_data])
 
+                    print('seqlen: ', seq_len)
                     print('Feed features into DNC.')
 
-                    step_output = session.run([
+                    step_output, mem_tuple = session.run([
                         softmax_output,
+                        memory_view,
                     ], feed_dict={
                         ncomputer.input_data: input_data,
                         ncomputer.sequence_length: seq_len,
@@ -191,12 +200,12 @@ if __name__ == '__main__':
                     sentence_output = ''
                     last_word = ''
                     step_output = step_output[0]  # shape (1, n+30, 21866)
-                    N = step_output.shape[1]
+                    N = step_output.shape[0]
 
-                    # print(step_output.shape)
+                    print(step_output.shape)
                     # print(step_output)
 
-                    for word in [step_output[:, i, :] for i in range(N)]:
+                    for word in [step_output[i, :] for i in range(N)]:
                         index = np.argmax(word)
                         try:
                             if word_map[index] != last_word:
@@ -208,6 +217,8 @@ if __name__ == '__main__':
                     print(colored('Target: ', color='cyan',), target)
                     print(colored('DCN: ', color='green'), sentence_output)
                     print('')
+                    # mem_array = np.array([mem_tuple[m] for m in mem_tuple.keys()])
+                    np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
 
                 except KeyboardInterrupt:
 

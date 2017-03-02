@@ -65,7 +65,7 @@ def load(anno_path, dict_path):
 
 def onehot(index, size):
     vec = np.zeros(size, dtype=np.float32)
-    index = index if index < size else size
+    index = index if index < size else size - 1
     vec[index] = 1.0
     return vec
 

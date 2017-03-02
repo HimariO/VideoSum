@@ -8,6 +8,7 @@
 
 # tensorboard logs directories
 logs
+test_logs
 
 # IPython checkpoints directories
 .ipynb_checkpoints
