@@ -65,7 +65,7 @@ plt.colorbar(orientation='horizontal')
 for i in range(4):
     a = fig2.add_subplot(2, 3, 3 + i)
     imgplot = plt.imshow(Gf[:, :, i])
-    a.set_title('readhead[%d]_weightings' % i)
+    a.set_title('free_gates[%d]' % i)
     a.set_xlabel('step')
     plt.colorbar(orientation='horizontal')
 

@@ -10,9 +10,10 @@ import csv
 import spacy
 import re
 
-from dnc.dnc import DNC
+from dnc.dnc import *
 from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController, L2RecurrentController
+from post_controller import PostController
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
@@ -48,7 +49,7 @@ def llprint(message):
 
 def load(anno_path, dict_path):
     datas = []
-    dictionary = {}
+    dictionary = {'': 0}
 
     with open(anno_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -127,10 +128,10 @@ if __name__ == '__main__':
     batch_size = 1
     input_size = 4096
     output_size = len(lexicon_dict)
-    sequence_max_length = 100
+    sequence_max_length = 500
     word_space_size = len(lexicon_dict)
-    words_count = 256
-    word_size = 128
+    words_count = 512
+    word_size = 64
     read_heads = 4
 
     learning_rate = 1e-4
@@ -176,8 +177,9 @@ if __name__ == '__main__':
             optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            ncomputer = DNC(
+            ncomputer = DNCPostControl(
                 L2RecurrentController,
+                PostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -194,6 +196,8 @@ if __name__ == '__main__':
             loss = tf.reduce_mean(
                 loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             )
+
+            loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
             summeries = []
 
@@ -270,7 +274,7 @@ if __name__ == '__main__':
                         included_vid += 1
 
                         # i += 1
-                        if included_vid < 10:
+                        if included_vid < 8:
                             continue
                         else:
                             included_vid = 0
@@ -285,8 +289,8 @@ if __name__ == '__main__':
                         # i += 1
                         continue
 
-                    summerize = (i % 100 == 0)
-                    take_checkpoint = (i != 0) and (i % 200 == 0)
+                    summerize = (i - last_sum >= 100)
+                    # take_checkpoint = (i != 0) and (i % 200 == 0)
                     print('Feed features into DNC.')
 
                     # reapeating same input for 'seq_reapte' times.

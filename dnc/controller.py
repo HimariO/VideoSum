@@ -65,7 +65,7 @@ class BaseController:
             name='nn_output_weights'
         )
         self.mem_output_weights = tf.Variable(
-            tf.random_normal([self.word_size * self.read_heads, self.output_size],  stddev=0.1),
+            tf.random_normal([self.word_size * self.read_heads, self.output_size], stddev=0.1),
             name='mem_output_weights'
         )
 

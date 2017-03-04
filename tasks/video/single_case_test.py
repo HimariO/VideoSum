@@ -46,7 +46,7 @@ def llprint(message):
 
 def load(anno_path, dict_path):
     datas = []
-    dictionary = {}
+    dictionary = {'': 0}
 
     with open(anno_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -83,8 +83,8 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict)
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 256
-    word_size = 128
+    words_count = 512
+    word_size = 64
     read_heads = 4
 
     learning_rate = 1e-5
@@ -92,8 +92,9 @@ if __name__ == '__main__':
     output_len = 50
 
     from_checkpoint = None
-    is_debug = ''
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'video='])
+    is_debug = False
+    is_memview = False
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view='])
 
     for opt in options:
         if opt[0] == '--checkpoint':
@@ -101,6 +102,9 @@ if __name__ == '__main__':
         elif opt[0] == '--debug':
             lowerc = opt[1].lower()
             is_debug = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--memory_view':
+            lowerc = opt[1].lower()
+            is_memview = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
     with graph.as_default():
@@ -157,11 +161,13 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            samples = np.random.choice(data, 1)
+            samples = np.random.choice(data, 5)
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
+            if is_memview:
+                videos = ['Ugb_uH72d0I_8_17.avi']
 
-            for test_file, target in zip(['Ugb_uH72d0I_8_17.avi'], vid_targets):
+            for test_file, target in zip(videos, vid_targets):
                 try:
                     try:
                         video_input = load_video(video_dir + test_file)
@@ -207,6 +213,8 @@ if __name__ == '__main__':
 
                     for word in [step_output[i, :] for i in range(N)]:
                         index = np.argmax(word)
+                        v = word.max()
+                        print('[%f] %d' % (v, index))
                         try:
                             if word_map[index] != last_word:
                                 sentence_output += word_map[index] + ' '
@@ -218,7 +226,8 @@ if __name__ == '__main__':
                     print(colored('DCN: ', color='green'), sentence_output)
                     print('')
                     # mem_array = np.array([mem_tuple[m] for m in mem_tuple.keys()])
-                    np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
+                    if is_memview:
+                        np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
 
                 except KeyboardInterrupt:
 
