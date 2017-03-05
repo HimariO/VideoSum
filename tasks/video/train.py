@@ -9,6 +9,7 @@ import os
 import csv
 import spacy
 import re
+import math
 
 from dnc.dnc import *
 from VGG.vgg19 import Vgg19
@@ -19,8 +20,9 @@ from PIL import Image
 from termcolor import colored
 
 anno_file = './dataset/MSR_en.csv'
-dict_file = './dataset/MSR_en_dict.csv'
+dict_file = './dataset/MSR_enW2V_dict.csv'
 video_dir = './dataset/YouTubeClips/'
+word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
 
 
@@ -71,7 +73,7 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1):
+def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, word_emb=None):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     # some video in annotation does not include in dataset.
     if not os.path.isfile(file_path):
@@ -83,22 +85,43 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1):
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
 
-    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['<EOS>']
+    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['EOS']
     output_str = [dictionary[i] for i in output_str]
-    seq_len = input_vec.shape[0] + len(output_str) + 1
+    print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
 
-    output_str = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)] + [onehot(i, word_space_size) for i in output_str]
-    output_vec = np.array(output_str, dtype=np.float32)
+    alone_end = False
+    if math.floor(input_vec.shape[0] / 2) > len(output_str):
+        alone_end = True
+        seq_len = input_vec.shape[0]
+    else:
+        seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1
+
+    if not alone_end:
+        output_vec = [np.zeros(word_space_size) for i in range(math.floor(input_vec.shape[0] / 2) + 1)]
+        if word_emb is None:
+            output_vec = output_vec + [onehot(i, word_space_size) for i in output_str]
+        else:
+            output_vec = output_vec + [word_emb[i] for i in output_str]
+        output_vec = output_vec + [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))]
+    else:
+        if word_emb is None:
+            output_vec = [onehot(i, word_space_size) for i in output_str]
+        else:
+            output_vec = [word_emb[i] for i in output_str]
+        output_vec = [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))] + output_vec
+
+    output_vec = np.array(output_vec, dtype=np.float32)
 
     mask = np.zeros(seq_len, dtype=np.float32)
-    mask[input_vec.shape[0]:] = 1
+    mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
 
-    padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
-    input_vec = np.concatenate([input_vec, padding_i], axis=0)
+    if seq_len > input_vec.shape[0]:
+        padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
+        input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
-    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
+    print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
         input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
@@ -123,13 +146,16 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
     data, lexicon_dict = load(anno_file, dict_file)
+    w2v_emb = np.load(word2v_emb_file)  # [word_num, vector_len]
     llprint("Done!\n")
 
     batch_size = 1
     input_size = 4096
-    output_size = len(lexicon_dict)
+    # output_size = len(lexicon_dict)
+    output_size = w2v_emb.shape[1]
     sequence_max_length = 500
-    word_space_size = len(lexicon_dict)
+    word_space_size = w2v_emb.shape[1]
+    # word_space_size = len(lexicon_dict)
     words_count = 512
     word_size = 64
     read_heads = 4
@@ -197,7 +223,7 @@ if __name__ == '__main__':
                 loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             )
 
-            loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
+            # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
             summeries = []
 
@@ -230,7 +256,9 @@ if __name__ == '__main__':
             last_100_losses = []
 
             start = 0 if start_step == 0 else start_step + 1
-            end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
+            end = len(data) * 4
+            # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
+            reuse_data_param = 1
 
             start_time_100 = time.time()
             end_time_100 = None
@@ -241,31 +269,36 @@ if __name__ == '__main__':
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
             seq_reapte = 3
+            seq_video_num = 8
 
-            # i = start
             for i in range(start, end):
-                if current_feat is None or current_feat[1] > i or current_feat[2] < i:
+                data_ID = int(i % len(data))
+
+                if current_feat is None or current_feat[1] > data_ID or current_feat[2] < data_ID:
                     for f in feat_files_tup:
-                        if f[1] <= i and f[2] >= i:
+                        if f[1] <= data_ID and f[2] >= data_ID:
                             llprint('Loading %s...' % f[0])
                             current_feat = np.load('./dataset/' + f[0]), f[1], f[2]
-                            mis_data_offset = 0
-                            # i = f[1]
                             break
                         else:
                             current_feat = (None, -1, -1)
+
                     if current_feat == (None, -1, -1):  # if no data are aliviable.
                         print('Cant find suitable data for tarining.')
                         sys.exit(0)
+
+                    if i > reuse_data_param * len(data):  # update input seq len, if train on same data more than one time.
+                        reuse_data_param = int(i / len(data))
+                        seq_video_num = 8 + reuse_data_param * 4
 
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
                     # sample = np.random.choice(data, 1)
-                    sample = data[i]
-                    video_feat = current_feat[0][i - current_feat[1]]
+                    sample = data[data_ID]
+                    video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -274,19 +307,15 @@ if __name__ == '__main__':
                         included_vid += 1
 
                         # i += 1
-                        if included_vid < 8:
+                        if included_vid < seq_video_num:
                             continue
                         else:
                             included_vid = 0
                     except OSError:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % sample['VideoID'])
-                        # mis_data_offset += 1
-                        # i += 1
                         continue
                     except KeyError:
                         print(colored('Error: ', color='red'), 'Annotation %s containing some word not exist in dictionary!' % sample['VideoID'])
-                        # mis_data_offset += 1
-                        # i += 1
                         continue
 
                     summerize = (i - last_sum >= 100)
@@ -336,7 +365,7 @@ if __name__ == '__main__':
                         start_time_100 = time.time()
                         last_100_losses = []
 
-                    if i - last_log >= 200:
+                    if i - last_log >= 400:
                         last_log = i
                         llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))

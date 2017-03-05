@@ -5,6 +5,7 @@
 *.jpg
 *.png
 *.csv
+*.zip
 
 # tensorboard logs directories
 logs

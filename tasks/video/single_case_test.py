@@ -8,9 +8,11 @@ import sys
 import os
 import csv
 
-from dnc.dnc import DNC
+from dnc.dnc import *
 from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController, L2RecurrentController
+from post_controller import PostController
+
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
@@ -94,7 +96,8 @@ if __name__ == '__main__':
     from_checkpoint = None
     is_debug = False
     is_memview = False
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view='])
+    use_w2v = False
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec='])
 
     for opt in options:
         if opt[0] == '--checkpoint':
@@ -105,6 +108,9 @@ if __name__ == '__main__':
         elif opt[0] == '--memory_view':
             lowerc = opt[1].lower()
             is_memview = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--word2vec':
+            lowerc = opt[1].lower()
+            use_w2v = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
     with graph.as_default():
@@ -123,8 +129,9 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            ncomputer = DNC(
+            ncomputer = DNCPostControl(
                 L2RecurrentController,
+                PostController,
                 input_size,
                 output_size,
                 sequence_max_length,
