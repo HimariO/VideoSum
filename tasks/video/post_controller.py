@@ -35,3 +35,31 @@ class PostController:
 
     def get_state(self):
         return self.state
+
+class DirectPostController:
+
+    def __init__(self, input_size, output_size, batch_size=1, cell_num=256, layer=2):
+        """
+        DirectPostController will getting [(memory readvector+controller pre-output), videofeature] as input.
+        input size [word_size * readhead + batch_size * dnc_output_size, 1]
+        output size is equal to DNC output size.
+        """
+        self.input_size = input_size
+        self.output_size = output_size
+        self.batch_size = batch_size
+        self.layer = layer
+
+        with tf.name_scope('post_controller'):
+            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(cell_num)
+            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
+            self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+
+    def network_op(self, dnc_out, video_feats, state):
+        X = tf.concat([dnc_out, video_feats], 1)
+        X = tf.convert_to_tensor(X)
+        lstm_out, new_state = self.stack_lstm(X, state)
+        final_out = tf.contrib.layers.fully_connected(lstm_out, num_outputs=self.output_size, trainable=True)
+        return final_out, new_state
+
+    def get_state(self):
+        return self.state

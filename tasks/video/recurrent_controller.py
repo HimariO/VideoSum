@@ -11,8 +11,9 @@ the state to reset to zero on every input sequnece
 class RecurrentController(BaseController):
 
     def network_vars(self):
-        self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
-        self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
+        with tf.variable_scope('LSTM_Controller'):
+            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
+            self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, X, state):
         X = tf.convert_to_tensor(X)
@@ -29,10 +30,11 @@ class L2RecurrentController(BaseController):
 
     def network_vars(self):
         self.layer = 2
-        self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
-        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
 
-        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+        with tf.variable_scope('L2_LSTM_Controller'):
+            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
+            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
+            self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, X, state):
         X = tf.convert_to_tensor(X)

@@ -437,3 +437,78 @@ class DNCPostControl(DNC):
                 'write_weightings': pack_into_tensor(final_results[7], axis=1),
                 'usage_vectors': pack_into_tensor(final_results[8], axis=1)
             }
+
+
+class DNCDirectPostControl(DNC):
+
+    def __init__(self, controller_class, post_controller_class, input_size, output_size, max_sequence_length,
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1):
+        self.post_control = post_controller_class(
+            input_size + batch_size * output_size,
+            output_size, batch_size
+        )
+
+        super(DNCPostControl, self).__init__(
+            controller_class, input_size, output_size, max_sequence_length,
+            memory_words_num=memory_words_num, memory_word_size=memory_word_size, memory_read_heads=memory_read_heads, batch_size=batch_size
+        )
+
+    def _step_op(self, step_input, memory_state, controller_state=None, post_controller_state=None):
+
+        last_read_vectors = memory_state[6]
+        pre_output, interface, nn_state, post_nn_state = None, None, None, None
+
+        if self.controller.has_recurrent_nn:
+            pre_output, interface, nn_state = self.controller.process_input(step_input, last_read_vectors, controller_state)
+        else:
+            pre_output, interface = self.controller.process_input(step_input, last_read_vectors)
+
+        usage_vector, write_weighting, memory_matrix, link_matrix, precedence_vector = self.memory.write(
+            memory_state[0], memory_state[1], memory_state[5],
+            memory_state[4], memory_state[2], memory_state[3],
+            interface['write_key'],
+            interface['write_strength'],
+            interface['free_gates'],
+            interface['allocation_gate'],
+            interface['write_gate'],
+            interface['write_vector'],
+            interface['erase_vector']
+        )
+
+        read_weightings, read_vectors = self.memory.read(
+            memory_matrix,
+            memory_state[5],
+            interface['read_keys'],
+            interface['read_strengths'],
+            link_matrix,
+            interface['read_modes'],
+        )
+
+        final_out, post_nn_state = self.post_control.network_op(
+            self.controller.final_output(pre_output, read_vectors)
+            step_input,
+            post_controller_state
+        )
+
+        return [
+
+            # report new memory state to be updated outside the condition branch
+            memory_matrix,
+            usage_vector,
+            precedence_vector,
+            link_matrix,
+            write_weighting,
+            read_weightings,
+            read_vectors,
+
+            final_out,
+            interface['free_gates'],
+            interface['allocation_gate'],
+            interface['write_gate'],
+
+            # report new state of RNN if exists
+            nn_state[0] if nn_state is not None else tf.zeros(1),
+            nn_state[1] if nn_state is not None else tf.zeros(1),
+            post_nn_state[0] if nn_state is not None else tf.zeros(1),
+            post_nn_state[1] if nn_state is not None else tf.zeros(1),
+        ]
