@@ -10,13 +10,14 @@ import csv
 
 from dnc.dnc import *
 from VGG.vgg19 import Vgg19
-from recurrent_controller import RecurrentController, L2RecurrentController
-from post_controller import PostController
+from recurrent_controller import *
+from post_controller import *
 
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
 from tensorflow.python import debug as tf_db
+from scipy import spatial
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
@@ -24,6 +25,8 @@ video_dir = './dataset/YouTubeClips/'
 
 
 def load_video(filepath, sample=12):
+    if not os.path.isfile(filepath):
+        raise OSError(2, '')
     clip = VideoFileClip(filepath)
     video = []
 
@@ -76,20 +79,8 @@ if __name__ == '__main__':
     data_dir = os.path.join(dirname, 'data', 'en-10k')
     tb_logs_dir = os.path.join(dirname, 'test_logs')
 
-    llprint("Loading Data ... ")
-    data, lexicon_dict = load(anno_file, dict_file)
-    llprint("Done!\n")
 
-    batch_size = 1
-    input_size = 4096  # 100352
-    output_size = len(lexicon_dict)
-    sequence_max_length = 100
-    word_space_size = len(lexicon_dict)
-    words_count = 512
-    word_size = 64
-    read_heads = 4
-
-    learning_rate = 1e-5
+    learning_rate = 1e-4
     momentum = 0.9
     output_len = 50
 
@@ -97,6 +88,7 @@ if __name__ == '__main__':
     is_debug = False
     is_memview = False
     use_w2v = False
+
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec='])
 
     for opt in options:
@@ -111,6 +103,24 @@ if __name__ == '__main__':
         elif opt[0] == '--word2vec':
             lowerc = opt[1].lower()
             use_w2v = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+
+    llprint("Loading Data ... ")
+    w2v_emb = None
+    if use_w2v:
+        dict_file = './dataset/MSR_enW2V_dict.csv'
+        w2v_emb = np.load('./dataset/MSR_enW2V.npy') * 3
+        tree = spatial.KDTree(w2v_emb)
+    data, lexicon_dict = load(anno_file, dict_file)
+    llprint("Done!\n")
+
+    batch_size = 1
+    input_size = 4096  # 100352
+    output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
+    sequence_max_length = 100
+    word_space_size = len(lexicon_dict)
+    words_count = 512
+    word_size = 64
+    read_heads = 4
 
     graph = tf.Graph()
     with graph.as_default():
@@ -129,9 +139,9 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            ncomputer = DNCPostControl(
+            ncomputer = DNCDirectPostControl(
                 L2RecurrentController,
-                PostController,
+                DirectPostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -145,7 +155,10 @@ if __name__ == '__main__':
             summaries = []
 
             output, memory_view = ncomputer.get_outputs()
-            softmax_output = tf.nn.softmax(output)
+            if not use_w2v:
+                softmax_output = tf.nn.softmax(output)
+            else:
+                softmax_output = output
             # for m in memory_view.keys():
             #     summaries.append(tf.summary.image(m, memory_view[m]))
             # summerize_op = tf.summary.merge(summaries)
@@ -181,8 +194,9 @@ if __name__ == '__main__':
                         print(colored('frame count: ', color='yellow'), len(video_input))
                         seq_len = len(video_input) + output_len
                     except:
-                        print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % video_file)
-                        sys.exit(0)
+                        print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % test_file)
+                        continue
+                        # sys.exit(0)
 
                     print('Getting VGG features...')
                     input_data = []
@@ -212,27 +226,52 @@ if __name__ == '__main__':
 
                     sentence_output = ''
                     last_word = ''
+
+                    sentence_indexs = []
+                    top5_outputs = []
+
                     step_output = step_output[0]  # shape (1, n+30, 21866)
                     N = step_output.shape[0]
 
-                    print(step_output.shape)
-                    # print(step_output)
+                    sentence_5 = [[''] for i in range(5)]
 
                     for word in [step_output[i, :] for i in range(N)]:
-                        index = np.argmax(word)
-                        v = word.max()
-                        print('[%f] %d' % (v, index))
-                        try:
-                            if word_map[index] != last_word:
-                                sentence_output += word_map[index] + ' '
-                            last_word = word_map[index]
-                        except:
-                            print('Cant find in dictionary! ', index)
+                        if use_w2v:
+                            distances, index = tree.query(word, k=5)
+                            top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
+                        else:
+                            index = np.argmax(word)
+                            v = word.max()
+                            _sorted = word.argsort()[-5:].tolist()
+                            _sorted.reverse()
+
+                            top5 = [(word_map[ID], word[ID]) for ID in _sorted]
+                            top5_outputs.append(top5)
+                        # try:
+                        #     if word_map[index] != last_word:
+                        #         sentence_output += word_map[index] + ' '
+                        #     sentence_indexs.append((index, v))
+                        #     last_word = word_map[index]
+                        # except:
+                        #     print('Cant find in dictionary! ', index)
+
+                    for t5 in top5_outputs:
+                        for w, s in zip(t5, sentence_5):
+                            if s[-1] != w[0]:
+                                s.append(w[0])
 
                     print(colored('Target: ', color='cyan',), target)
-                    print(colored('DCN: ', color='green'), sentence_output)
+
+                    for sent in sentence_5:
+                        out = ''
+                        for w in sent:
+                            out += w + ' '
+                        print(colored('DCN: ', color='green'), out)
+
+                    # print(colored('DCN: ', color='green'), sentence_output)
+                    # print(sentence_indexs)
+                    # print(top5_outputs)
                     print('')
-                    # mem_array = np.array([mem_tuple[m] for m in mem_tuple.keys()])
                     if is_memview:
                         np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
 

@@ -39,8 +39,8 @@ with open('./dataset/MSR_en.csv', newline='') as csvfile:
 
 feats = []
 
-start = 40001
-end = 50003
+start = 50001
+end = 65003
 end = end if end < len(datas) else len(datas)
 datas = datas[start:end]
 

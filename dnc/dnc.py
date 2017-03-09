@@ -195,21 +195,20 @@ class DNC:
 
         final_results = None
 
-        with tf.variable_scope("sequence_loop") as scope:
-            time = tf.constant(0, dtype=tf.int32)
+        time = tf.constant(0, dtype=tf.int32)
 
-            final_results = tf.while_loop(
-                cond=lambda time, *_: time < self.sequence_length,
-                body=self._loop_body,
-                loop_vars=(
-                    time, memory_state, outputs,
-                    free_gates, allocation_gates, write_gates,
-                    read_weightings, write_weightings,
-                    usage_vectors, controller_state
-                ),
-                parallel_iterations=32,
-                swap_memory=True
-            )
+        final_results = tf.while_loop(
+            cond=lambda time, *_: time < self.sequence_length,
+            body=self._loop_body,
+            loop_vars=(
+                time, memory_state, outputs,
+                free_gates, allocation_gates, write_gates,
+                read_weightings, write_weightings,
+                usage_vectors, controller_state
+            ),
+            parallel_iterations=32,
+            swap_memory=True
+        )
 
         dependencies = []
         if self.controller.has_recurrent_nn:
@@ -407,21 +406,20 @@ class DNCPostControl(DNC):
 
         final_results = None
 
-        with tf.variable_scope("sequence_loop") as scope:
-            time = tf.constant(0, dtype=tf.int32)
+        time = tf.constant(0, dtype=tf.int32)
 
-            final_results = tf.while_loop(
-                cond=lambda time, *_: time < self.sequence_length,
-                body=self._loop_body,
-                loop_vars=(
-                    time, memory_state, outputs,
-                    free_gates, allocation_gates, write_gates,
-                    read_weightings, write_weightings,
-                    usage_vectors, controller_state, post_controller_state
-                ),
-                parallel_iterations=32,
-                swap_memory=True
-            )
+        final_results = tf.while_loop(
+            cond=lambda time, *_: time < self.sequence_length,
+            body=self._loop_body,
+            loop_vars=(
+                time, memory_state, outputs,
+                free_gates, allocation_gates, write_gates,
+                read_weightings, write_weightings,
+                usage_vectors, controller_state, post_controller_state
+            ),
+            parallel_iterations=32,
+            swap_memory=True
+        )
 
         dependencies = []
         if self.controller.has_recurrent_nn:
@@ -439,13 +437,13 @@ class DNCPostControl(DNC):
             }
 
 
-class DNCDirectPostControl(DNC):
+class DNCDirectPostControl(DNCPostControl):
 
     def __init__(self, controller_class, post_controller_class, input_size, output_size, max_sequence_length,
                  memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1):
         self.post_control = post_controller_class(
             input_size + batch_size * output_size,
-            output_size, batch_size
+            output_size, cell_num=512
         )
 
         super(DNCPostControl, self).__init__(
@@ -485,7 +483,7 @@ class DNCDirectPostControl(DNC):
         )
 
         final_out, post_nn_state = self.post_control.network_op(
-            self.controller.final_output(pre_output, read_vectors)
+            self.controller.final_output(pre_output, read_vectors),
             step_input,
             post_controller_state
         )

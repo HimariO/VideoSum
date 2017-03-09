@@ -12,7 +12,7 @@ class RecurrentController(BaseController):
 
     def network_vars(self):
         with tf.variable_scope('LSTM_Controller'):
-            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
+            self.lstm_cell = tf.contrib.rnn.LSTMCell(256)
             self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, X, state):
@@ -30,15 +30,16 @@ class L2RecurrentController(BaseController):
 
     def network_vars(self):
         self.layer = 2
-
-        with tf.variable_scope('L2_LSTM_Controller'):
-            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(256)
-            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
-            self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+        initializer = tf.contrib.layers.xavier_initializer()
+        self.lstm_cell = tf.contrib.rnn.LSTMCell(256, initializer=initializer, use_peepholes=True)
+        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
+        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, X, state):
-        X = tf.convert_to_tensor(X)
-        return self.stack_lstm(X, state)
+
+        with tf.variable_scope('L2_LSTM_Controller'):
+            X = tf.convert_to_tensor(X)
+            return self.stack_lstm(X, state)
 
     def get_state(self):
         return self.state

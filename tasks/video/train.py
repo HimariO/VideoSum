@@ -12,15 +12,14 @@ import re
 import math
 
 from dnc.dnc import *
-from VGG.vgg19 import Vgg19
 from recurrent_controller import RecurrentController, L2RecurrentController
-from post_controller import PostController
+from post_controller import *
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
 
 anno_file = './dataset/MSR_en.csv'
-dict_file = './dataset/MSR_enW2V_dict.csv'
+dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
@@ -73,8 +72,9 @@ def onehot(index, size):
     return vec
 
 
-def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, word_emb=None):
+def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, word_emb=None, extend_target=False):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
+    EOS = '<EOS>' if word_emb is None else 'EOS'
     # some video in annotation does not include in dataset.
     if not os.path.isfile(file_path):
         raise OSError(2, 'No such file or directory', file_path)
@@ -85,16 +85,23 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
 
-    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + ['EOS']
+    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
     output_str = [dictionary[i] for i in output_str]
+    if extend_target:
+        temp = []
+        for s in output_str:
+            for _ in range(5):
+                temp.append(s)
+        output_str = temp
+
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
 
     alone_end = False
     if math.floor(input_vec.shape[0] / 2) > len(output_str):
         alone_end = True
-        seq_len = input_vec.shape[0]
+        seq_len = input_vec.shape[0] + 10
     else:
-        seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1
+        seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1 + 10
 
     if not alone_end:
         output_vec = [np.zeros(word_space_size) for i in range(math.floor(input_vec.shape[0] / 2) + 1)]
@@ -113,7 +120,21 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
     output_vec = np.array(output_vec, dtype=np.float32)
 
     mask = np.zeros(seq_len, dtype=np.float32)
-    mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
+    if not alone_end:
+        mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
+    else:
+        mask[-len(output_str):] = 1
+
+    # seq_len = input_vec.shape[0] + len(output_str) + 1
+    # output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)]
+    # if word_emb is None:
+    #     output_vec += [onehot(i, word_space_size) for i in output_str]
+    # else:
+    #     output_vec += [word_emb[i] for i in output_str]
+    # output_vec = np.array(output_vec, dtype=np.float32)
+    #
+    # mask = np.zeros(seq_len, dtype=np.float32)
+    # mask[input_vec.shape[0]:] = 1
 
     if seq_len > input_vec.shape[0]:
         padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
@@ -121,7 +142,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
 
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
-    print(colored('output_vec: ', color='yellow'), output_vec.shape)
+    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
         input_vec,
         np.reshape(output_vec, (1, -1, word_space_size)),
@@ -146,16 +167,20 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
     data, lexicon_dict = load(anno_file, dict_file)
-    w2v_emb = np.load(word2v_emb_file)  # [word_num, vector_len]
+    # w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
+    w2v_emb = None
     llprint("Done!\n")
 
     batch_size = 1
     input_size = 4096
-    # output_size = len(lexicon_dict)
-    output_size = w2v_emb.shape[1]
+
+    if w2v_emb is None:
+        output_size = len(lexicon_dict)
+        word_space_size = len(lexicon_dict)
+    else:
+        output_size = w2v_emb.shape[1]
+        word_space_size = w2v_emb.shape[1]
     sequence_max_length = 500
-    word_space_size = w2v_emb.shape[1]
-    # word_space_size = len(lexicon_dict)
     words_count = 512
     word_size = 64
     read_heads = 4
@@ -165,13 +190,15 @@ if __name__ == '__main__':
 
     from_checkpoint = None
     iterations = len(data)
+    data_size = 55000
     start_step = 0
 
     last_sum = 1
     last_log = 1
     mis_data_offset = 0
+    single_repeat = False
 
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start='])
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi='])
 
     """
     If need to resume training from checkpoint, you must start form iteration which have same step with one of npy sample's start file.
@@ -185,17 +212,15 @@ if __name__ == '__main__':
             iterations = int(opt[1])
         elif opt[0] == '--start':
             last_sum = last_log = start_step = int(opt[1])
+        elif opt[0] == '--sig_vertifi':
+            lowerc = opt[1].lower()
+            single_repeat = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
     with graph.as_default():
         with tf.Session(graph=graph) as session:
 
             llprint("Building Computational Graph ... ")
-            # llprint("Building VGG ... ")
-            #
-            # vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-            # image_holder = tf.placeholder('float32', [1, 224, 224, 3])
-            # vgg.build(image_holder)
 
             llprint("Done!")
             llprint("Building DNC ... ")
@@ -203,9 +228,9 @@ if __name__ == '__main__':
             optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            ncomputer = DNCPostControl(
+            ncomputer = DNCDirectPostControl(
                 L2RecurrentController,
-                PostController,
+                DirectPostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -222,9 +247,9 @@ if __name__ == '__main__':
             loss = tf.reduce_mean(
                 loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             )
-
             # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
+            # loss = tf.contrib.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
             summeries = []
 
             gradients = optimizer.compute_gradients(loss)
@@ -234,6 +259,10 @@ if __name__ == '__main__':
             for (grad, var) in gradients:
                 if grad is not None:
                     summeries.append(tf.summary.histogram(var.name + '/grad', grad))
+
+            trainable_var = tf.trainable_variables()
+            for v in trainable_var:
+                summeries.append(tf.summary.histogram(v.name + '/values', v))
 
             apply_gradients = optimizer.apply_gradients(gradients)
 
@@ -256,7 +285,7 @@ if __name__ == '__main__':
             last_100_losses = []
 
             start = 0 if start_step == 0 else start_step + 1
-            end = len(data) * 4
+            end = data_size * 4
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -272,7 +301,7 @@ if __name__ == '__main__':
             seq_video_num = 8
 
             for i in range(start, end):
-                data_ID = int(i % len(data))
+                data_ID = int(i % data_size)
 
                 if current_feat is None or current_feat[1] > data_ID or current_feat[2] < data_ID:
                     for f in feat_files_tup:
@@ -287,8 +316,8 @@ if __name__ == '__main__':
                         print('Cant find suitable data for tarining.')
                         sys.exit(0)
 
-                    if i > reuse_data_param * len(data):  # update input seq len, if train on same data more than one time.
-                        reuse_data_param = int(i / len(data))
+                    if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
+                        reuse_data_param = int(i / data_size)
                         seq_video_num = 8 + reuse_data_param * 4
 
                 try:
@@ -298,7 +327,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -338,12 +367,13 @@ if __name__ == '__main__':
                             loss_weights: mask
                         })
 
-                        print(colored('loss: ', color='yellow'), loss_value)
+                        print(colored('[%d]loss: ' % n, color='yellow'), loss_value)
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
                         elif (loss_value < first_loss and n >= seq_reapte) or n >= seq_reapte * 10:
-                            break
+                            if not single_repeat:
+                                break
 
                     last_100_losses.append(loss_value)
                     summerizer.add_summary(summary, i)

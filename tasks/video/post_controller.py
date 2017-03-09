@@ -20,8 +20,8 @@ class PostController:
         self.output_size = output_size
         self.batch_size = batch_size
 
-        with tf.name_scope('post_controller'):
-            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(cell_num)
+        with tf.variable_scope('post_controller'):
+            self.lstm_cell = tf.contrib.rnn.LSTMCell(cell_num)
             self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
 
             # self.output_W = tf.Variable(tf.random_normal([cell_num, output_size], stddev=0.1), name='post_contorler_Wout')
@@ -36,6 +36,7 @@ class PostController:
     def get_state(self):
         return self.state
 
+
 class DirectPostController:
 
     def __init__(self, input_size, output_size, batch_size=1, cell_num=256, layer=2):
@@ -49,17 +50,18 @@ class DirectPostController:
         self.batch_size = batch_size
         self.layer = layer
 
-        with tf.name_scope('post_controller'):
-            self.lstm_cell = tf.contrib.rnn.BasicLSTMCell(cell_num)
-            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
-            self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+        self.lstm_cell = tf.contrib.rnn.LSTMCell(cell_num, use_peepholes=True)
+        self.lstm_cell2 = tf.contrib.rnn.LSTMCell(cell_num / 2, use_peepholes=True)
+        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell, self.lstm_cell2])
+        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, dnc_out, video_feats, state):
-        X = tf.concat([dnc_out, video_feats], 1)
-        X = tf.convert_to_tensor(X)
-        lstm_out, new_state = self.stack_lstm(X, state)
-        final_out = tf.contrib.layers.fully_connected(lstm_out, num_outputs=self.output_size, trainable=True)
-        return final_out, new_state
+        with tf.variable_scope('direct_post_controller'):
+            X = tf.concat([dnc_out, video_feats], 1)
+            X = tf.convert_to_tensor(X)
+            lstm_out, new_state = self.stack_lstm(X, state)
+            final_out = tf.contrib.layers.fully_connected(lstm_out, num_outputs=self.output_size, trainable=True)
+            return final_out, new_state
 
     def get_state(self):
         return self.state
