@@ -39,8 +39,8 @@ with open('./dataset/MSR_en.csv', newline='') as csvfile:
 
 feats = []
 
-start = 50001
-end = 65003
+start = 0
+end = 202
 end = end if end < len(datas) else len(datas)
 datas = datas[start:end]
 
@@ -64,11 +64,12 @@ with tf.Session() as sess:
 
             print('%d / %d' % (start + ind, end))
             feats.append(feat)
+            print(annotation)
         else:
             feats.append([0])
             print(colored('error', color='red'))
         # break  # one time only
-        if ind % num_per_file == 0 and ind != 0:
+        if ((ind + start) % num_per_file == 0 and ind != 0) or ind == len(datas) - 1:
             feats = np.array(feats)
             print(colored('Start Saving...', color='green'))
             np.save('dataset/features_%d_%d.npy' % (start + ind - num_per_file, start + ind - 1), feats)

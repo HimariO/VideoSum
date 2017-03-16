@@ -12,7 +12,7 @@ import re
 import math
 
 from dnc.dnc import *
-from recurrent_controller import RecurrentController, L2RecurrentController
+from recurrent_controller import RecurrentController, L2RecurrentController, L2NRecurrentController
 from post_controller import *
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
@@ -90,7 +90,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
     if extend_target:
         temp = []
         for s in output_str:
-            for _ in range(5):
+            for _ in range(4):
                 temp.append(s)
         output_str = temp
 
@@ -225,12 +225,12 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             ncomputer = DNCDirectPostControl(
-                L2RecurrentController,
-                DirectPostController,
+                L2NRecurrentController,
+                PostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -239,6 +239,17 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
+            # ncomputer = DNCPostControl(
+            #     L2RecurrentController,
+            #     PostController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
 
             output, _ = ncomputer.get_outputs()
 
@@ -297,7 +308,7 @@ if __name__ == '__main__':
             current_feat = (None, -1, -1)  # [npy, start_id, end_id]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
-            seq_reapte = 3
+            seq_reapte = 5
             seq_video_num = 8
 
             for i in range(start, end):
@@ -327,7 +338,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, extend_target=True)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_

@@ -140,8 +140,8 @@ if __name__ == '__main__':
             llprint("Building DNC ... ")
 
             ncomputer = DNCDirectPostControl(
-                L2RecurrentController,
-                DirectPostController,
+                L2NRecurrentController,
+                PostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -150,6 +150,17 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
+            # ncomputer = DNCDirectPostControl(
+            #     L2RecurrentController,
+            #     DirectPostController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
 
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
             summaries = []
@@ -186,6 +197,7 @@ if __name__ == '__main__':
             vid_targets = [f['Description'] for f in samples]
             if is_memview:
                 videos = ['Ugb_uH72d0I_8_17.avi']
+                # videos = ['eZLxohGP4IE_15_25.avi']
 
             for test_file, target in zip(videos, vid_targets):
                 try:
