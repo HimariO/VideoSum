@@ -20,6 +20,7 @@ from termcolor import colored
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
+w2v_dict_file = './dataset/MSR_enW2V_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
@@ -90,7 +91,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
     if extend_target:
         temp = []
         for s in output_str:
-            for _ in range(4):
+            for _ in range(3):
                 temp.append(s)
         output_str = temp
 
@@ -166,21 +167,24 @@ if __name__ == '__main__':
     feat_files_tup.sort(key=lambda x: x[1])  # sort by start data id.
 
     llprint("Loading Data ... ")
-    data, lexicon_dict = load(anno_file, dict_file)
+
     # w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
     w2v_emb = None
+
+    if w2v_emb is None:
+        data, lexicon_dict = load(anno_file, dict_file)
+        output_size = len(lexicon_dict)
+        word_space_size = len(lexicon_dict)
+    else:
+        data, lexicon_dict = load(anno_file, w2v_dict_file)
+        output_size = w2v_emb.shape[1]
+        word_space_size = w2v_emb.shape[1]
+    sequence_max_length = 500
+
     llprint("Done!\n")
 
     batch_size = 1
     input_size = 4096
-
-    if w2v_emb is None:
-        output_size = len(lexicon_dict)
-        word_space_size = len(lexicon_dict)
-    else:
-        output_size = w2v_emb.shape[1]
-        word_space_size = w2v_emb.shape[1]
-    sequence_max_length = 500
     words_count = 512
     word_size = 64
     read_heads = 4
@@ -240,7 +244,7 @@ if __name__ == '__main__':
                 batch_size
             )
             # ncomputer = DNCPostControl(
-            #     L2RecurrentController,
+            #     L2NRecurrentController,
             #     PostController,
             #     input_size,
             #     output_size,
@@ -255,12 +259,14 @@ if __name__ == '__main__':
 
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
-            loss = tf.reduce_mean(
-                loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
-            )
+            if w2v_emb is None:
+                loss = tf.reduce_mean(
+                    loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                )
+            else:
+                loss = tf.contrib.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
             # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
-            # loss = tf.contrib.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
             summeries = []
 
             gradients = optimizer.compute_gradients(loss)
@@ -338,7 +344,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, extend_target=True)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, extend_target=True, word_emb=w2v_emb)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -346,7 +352,6 @@ if __name__ == '__main__':
                         mask = np.concatenate([mask, mask_], axis=1) if mask is not None else mask_
                         included_vid += 1
 
-                        # i += 1
                         if included_vid < seq_video_num:
                             continue
                         else:

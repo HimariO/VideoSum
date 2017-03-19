@@ -150,9 +150,9 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
-            # ncomputer = DNCDirectPostControl(
-            #     L2RecurrentController,
-            #     DirectPostController,
+            # ncomputer = DNCPostControl(
+            #     L2NRecurrentController,
+            #     PostController,
             #     input_size,
             #     output_size,
             #     sequence_max_length,
@@ -192,7 +192,8 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            samples = np.random.choice(data, 5)
+            # samples = np.random.choice(data, 5)
+            samples = data[1689:1695]
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
             if is_memview:

@@ -316,7 +316,7 @@ class TextData:
 
         total_processed_examples = 0
         total_steps = int(np.ceil(len(curr_data)) / float(batch_size))
-        for step in range(total_steps+1):
+        for step in range(total_steps + 1):
             batch_start = step * batch_size
 
             curr = curr_data[batch_start:batch_start + batch_size]

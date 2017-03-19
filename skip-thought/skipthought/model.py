@@ -32,7 +32,7 @@ class SkipthoughtModel:
         if self.cell_type == 'lstm':
             self.cell_fn = lambda x: tf.nn.rnn_cell.BasicLSTMCell(x, state_is_tuple=True)
         elif self.cell_type == 'gru':
-            self.cell_fn = tf.nn.rnn_cell.GRUCell
+            self.cell_fn = tf.contrib.rnn.GRUCell
 
         self._create_placeholders()
         self._logger.info("Created placeholders.")
@@ -57,6 +57,13 @@ class SkipthoughtModel:
             self.prev_decoder_weights = [tf.placeholder(tf.float32, shape=[None,], name="prev__decoder_weight{0}".format(i))
                                          for i in range(self.max_length_decoder)]
 
+            self.curr_decoder_input = [tf.placeholder(tf.int32, [None, ], name="curr_decoder_input{0}".format(i))
+                                       for i in range(self.max_length_decoder)]
+            self.curr_decoder_target = [tf.placeholder(tf.int32, [None, ], name="curr_decoder_target{0}".format(i))
+                                        for i in range(self.max_length_decoder)]
+            self.curr_decoder_weights = [tf.placeholder(tf.float32, shape=[None,], name="curr__decoder_weight{0}".format(i))
+                                         for i in range(self.max_length_decoder)]
+
             self.next_decoder_input = [tf.placeholder(tf.int32, [None, ], name="next_decoder_input{0}".format(i))
                                        for i in range(self.max_length_decoder)]
             self.next_decoder_target = [tf.placeholder(tf.int32, [None, ], name="next_decoder_target{0}".format(i))
@@ -77,15 +84,23 @@ class SkipthoughtModel:
             b = tf.get_variable("proj_b", [self.max_vocab_size])
             output_projection = (w, b)
 
-            decoder_outputs, _ = tf.nn.seq2seq.rnn_decoder(embedded_prev, initial_state=encoder_state,
-                                                           cell=cell)
+            decoder_outputs, _ = tf.contrib.legacy_seq2seq.rnn_decoder(
+                embedded_prev,
+                initial_state=encoder_state,
+                cell=cell
+            )
 
-        loop_function_predict = tf.nn.seq2seq._extract_argmax_and_embed(self.embedding_matrix, output_projection=(w, b), update_embedding=False)
+        loop_function_predict = tf.contrib.legacy_seq2seq._extract_argmax_and_embed(self.embedding_matrix, output_projection=(w, b), update_embedding=False)
         with tf.variable_scope(scope_name, reuse=True):
-            decoder_predict_hiddens, _ = tf.nn.seq2seq.rnn_decoder(embedded_prev, initial_state=encoder_state,
-                                                                       cell=cell, loop_function=loop_function_predict)
+            decoder_predict_hiddens, _ = tf.contrib.legacy_seq2seq.rnn_decoder(
+                embedded_prev,
+                initial_state=encoder_state,
+                cell=cell,
+                loop_function=loop_function_predict
+            )
 
             decoder_predict_logits = [tf.nn.xw_plus_b(x, w, b) for x in decoder_predict_hiddens]
+
         return decoder_outputs, decoder_predict_logits, output_projection
 
     def _create_encoder(self, embedded, cudnn=False):
@@ -105,11 +120,14 @@ class SkipthoughtModel:
             else:
                 cell = self.cell_fn(self.num_hidden)
                 if self.num_layers > 1:
-                    cell = tf.nn.rnn_cell.MultiRNNCell([cell] * self.num_layers)
-                encoder_output, encoder_state = tf.nn.dynamic_rnn(cell, dtype=tf.float32,
-                                                                  inputs=embedded,
-                                                                  sequence_length=self.encoder_seq_len,
-                                                                  swap_memory=True)
+                    cell = tf.contrib.rnn.MultiRNNCell([cell] * self.num_layers)
+                encoder_output, encoder_state = tf.nn.dynamic_rnn(
+                    cell,
+                    dtype=tf.float32,
+                    inputs=embedded,
+                    sequence_length=self.encoder_seq_len,
+                    swap_memory=True
+                )
                 if self.num_layers == 1:
                     encoder_state = encoder_state
                 else:
@@ -136,6 +154,10 @@ class SkipthoughtModel:
             self._create_decoder("prev_decoder", self.encoder_state, self.prev_decoder_input)
         self._logger.info("Prev decoder done")
 
+        curr_decoder_outputs, curr_decoder_predict_logits, curr_decoder_output_proj = \
+            self._create_decoder("curr_decoder", self.encoder_state, self.curr_decoder_input)
+        self._logger.info("Curr decoder done")
+
         next_decoder_outputs, next_decoder_predict_logits, next_decoder_output_proj = \
             self._create_decoder("next_decoder", self.encoder_state, self.next_decoder_input)
         self._logger.info("Next decoder done")
@@ -144,6 +166,10 @@ class SkipthoughtModel:
         self.prev_decoder_predict_logits = prev_decoder_predict_logits
         self.prev_decoder_predict = [tf.argmax(logit, 1) for logit in self.prev_decoder_predict_logits]
 
+        self.curr_decoder_outputs = curr_decoder_outputs
+        self.curr_decoder_predict_logits = curr_decoder_predict_logits
+        self.curr_decoder_predict = [tf.argmax(logit, 1) for logit in self.curr_decoder_predict_logits]
+
         self.next_decoder_outputs = next_decoder_outputs
         self.next_decoder_predict_logits = next_decoder_predict_logits
         self.next_decoder_predict = [tf.argmax(logit, 1) for logit in self.next_decoder_predict_logits]
@@ -151,27 +177,39 @@ class SkipthoughtModel:
         def get_sampled_loss(w, b):
             w_t = tf.transpose(w)
 
-            def sampled_loss(inputs, labels):
+            def sampled_loss(labels, inputs):
                 labels = tf.reshape(labels, [-1, 1])
                 # We need to compute the sampled_softmax_loss using 32bit floats to
                 # avoid numerical instabilities.
                 local_w_t = tf.cast(w_t, tf.float32)
                 local_b = tf.cast(b, tf.float32)
                 local_inputs = tf.cast(inputs, tf.float32)
-                return tf.nn.sampled_softmax_loss(local_w_t, local_b, local_inputs, labels,
+                return tf.nn.sampled_softmax_loss(local_w_t, local_b, labels, local_inputs,
                                                   self.num_samples, self.max_vocab_size)
             return sampled_loss
 
         prev_sampled_loss = get_sampled_loss(*prev_decoder_output_proj)
+        curr_sampled_loss = get_sampled_loss(*curr_decoder_output_proj)
         next_sampled_loss = get_sampled_loss(*next_decoder_output_proj)
-        loss_prev = tf.nn.seq2seq.sequence_loss(prev_decoder_outputs,
-                                                self.prev_decoder_target,
-                                                self.prev_decoder_weights,
-                                                softmax_loss_function=prev_sampled_loss)
-        loss_next = tf.nn.seq2seq.sequence_loss(next_decoder_outputs,
-                                                self.next_decoder_target,
-                                                self.next_decoder_weights,
-                                                softmax_loss_function=next_sampled_loss)
+
+        loss_prev = tf.contrib.legacy_seq2seq.sequence_loss(
+            prev_decoder_outputs,
+            self.prev_decoder_target,
+            self.prev_decoder_weights,
+            softmax_loss_function=prev_sampled_loss
+        )
+        loss_curr = tf.contrib.legacy_seq2seq.sequence_loss(
+            curr_decoder_outputs,
+            self.curr_decoder_target,
+            self.curr_decoder_weights,
+            softmax_loss_function=curr_sampled_loss
+        )
+        loss_next = tf.contrib.legacy_seq2seq.sequence_loss(
+            next_decoder_outputs,
+            self.next_decoder_target,
+            self.next_decoder_weights,
+            softmax_loss_function=next_sampled_loss
+        )
         self.loss = loss_prev + loss_next
 
         global_step = tf.Variable(0, trainable=False)
@@ -208,6 +246,10 @@ class SkipthoughtModel:
         feed_dict.update({self.prev_decoder_target[i]: prev_targ.data[:, i] for i in range(max_len)})
         feed_dict.update({self.prev_decoder_weights[i]: prev_targ.weights[:, i] for i in range(max_len)})
 
+        feed_dict.update({self.curr_decoder_input[i]: prev_inp.data[:, i] for i in range(max_len)})
+        feed_dict.update({self.curr_decoder_target[i]: enc_inp.data[:, i] for i in range(max_len)})
+        feed_dict.update({self.curr_decoder_weights[i]: enc_inp.weights[:, i] for i in range(max_len)})
+
         feed_dict.update({self.next_decoder_input[i]: next_inp.data[:, i] for i in range(max_len)})
         feed_dict.update({self.next_decoder_target[i]: next_targ.data[:, i] for i in range(max_len)})
         feed_dict.update({self.next_decoder_weights[i]: next_targ.weights[:, i] for i in range(max_len)})
@@ -216,6 +258,7 @@ class SkipthoughtModel:
     def _fill_feed_dict_predict(self, curr):
         feed_dict = {self.encoder_input: curr.data, self.encoder_seq_len: curr.seq_lengths,
                      self.prev_decoder_input[0]: np.array([curr.go_value]),
+                     self.curr_decoder_input[0]: np.array([curr.go_value]),
                      self.next_decoder_input[0]: np.array([curr.go_value])}
         return feed_dict
 
@@ -241,4 +284,4 @@ class SkipthoughtModel:
 
     def predict(self, curr):
         feed_dict = self._fill_feed_dict_predict(curr)
-        return self.prev_decoder_predict, self.next_decoder_predict, feed_dict
+        return self.prev_decoder_predict, self.curr_decoder_predict, self.next_decoder_predict, feed_dict
