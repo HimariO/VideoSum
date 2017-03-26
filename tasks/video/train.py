@@ -97,45 +97,45 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, wo
 
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
 
-    alone_end = False
-    if math.floor(input_vec.shape[0] / 2) > len(output_str):
-        alone_end = True
-        seq_len = input_vec.shape[0] + 10
-    else:
-        seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1 + 10
-
-    if not alone_end:
-        output_vec = [np.zeros(word_space_size) for i in range(math.floor(input_vec.shape[0] / 2) + 1)]
-        if word_emb is None:
-            output_vec = output_vec + [onehot(i, word_space_size) for i in output_str]
-        else:
-            output_vec = output_vec + [word_emb[i] for i in output_str]
-        output_vec = output_vec + [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))]
-    else:
-        if word_emb is None:
-            output_vec = [onehot(i, word_space_size) for i in output_str]
-        else:
-            output_vec = [word_emb[i] for i in output_str]
-        output_vec = [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))] + output_vec
-
-    output_vec = np.array(output_vec, dtype=np.float32)
-
-    mask = np.zeros(seq_len, dtype=np.float32)
-    if not alone_end:
-        mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
-    else:
-        mask[-len(output_str):] = 1
-
-    # seq_len = input_vec.shape[0] + len(output_str) + 1
-    # output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)]
-    # if word_emb is None:
-    #     output_vec += [onehot(i, word_space_size) for i in output_str]
+    # alone_end = False
+    # if math.floor(input_vec.shape[0] / 2) > len(output_str):
+    #     alone_end = True
+    #     seq_len = input_vec.shape[0] + 10
     # else:
-    #     output_vec += [word_emb[i] for i in output_str]
+    #     seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1 + 10
+    #
+    # if not alone_end:
+    #     output_vec = [np.zeros(word_space_size) for i in range(math.floor(input_vec.shape[0] / 2) + 1)]
+    #     if word_emb is None:
+    #         output_vec = output_vec + [onehot(i, word_space_size) for i in output_str]
+    #     else:
+    #         output_vec = output_vec + [word_emb[i] for i in output_str]
+    #     output_vec = output_vec + [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))]
+    # else:
+    #     if word_emb is None:
+    #         output_vec = [onehot(i, word_space_size) for i in output_str]
+    #     else:
+    #         output_vec = [word_emb[i] for i in output_str]
+    #     output_vec = [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))] + output_vec
+    #
     # output_vec = np.array(output_vec, dtype=np.float32)
     #
     # mask = np.zeros(seq_len, dtype=np.float32)
-    # mask[input_vec.shape[0]:] = 1
+    # if not alone_end:
+    #     mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
+    # else:
+    #     mask[-len(output_str):] = 1
+
+    seq_len = input_vec.shape[0] + len(output_str) + 1
+    output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)]
+    if word_emb is None:
+        output_vec += [onehot(i, word_space_size) for i in output_str]
+    else:
+        output_vec += [word_emb[i] for i in output_str]
+    output_vec = np.array(output_vec, dtype=np.float32)
+
+    mask = np.zeros(seq_len, dtype=np.float32)
+    mask[input_vec.shape[0]:] = 1
 
     if seq_len > input_vec.shape[0]:
         padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
@@ -168,8 +168,8 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
 
-    # w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
-    w2v_emb = None
+    w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
+    # w2v_emb = None
 
     if w2v_emb is None:
         data, lexicon_dict = load(anno_file, dict_file)
@@ -232,18 +232,7 @@ if __name__ == '__main__':
             optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            ncomputer = DNCDirectPostControl(
-                L2NRecurrentController,
-                PostController,
-                input_size,
-                output_size,
-                sequence_max_length,
-                words_count,
-                word_size,
-                read_heads,
-                batch_size
-            )
-            # ncomputer = DNCPostControl(
+            # ncomputer = DNCDirectPostControl(
             #     L2NRecurrentController,
             #     PostController,
             #     input_size,
@@ -254,6 +243,17 @@ if __name__ == '__main__':
             #     read_heads,
             #     batch_size
             # )
+            ncomputer = DNCPostControl(
+                L2NRecurrentController,
+                PostController,
+                input_size,
+                output_size,
+                sequence_max_length,
+                words_count,
+                word_size,
+                read_heads,
+                batch_size
+            )
 
             output, _ = ncomputer.get_outputs()
 
@@ -335,7 +335,7 @@ if __name__ == '__main__':
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
                         reuse_data_param = int(i / data_size)
-                        seq_video_num = 8 + reuse_data_param * 4
+                        seq_video_num = 8 + reuse_data_param * 2
 
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
@@ -344,7 +344,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, extend_target=True, word_emb=w2v_emb)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -407,6 +407,11 @@ if __name__ == '__main__':
 
                         print("Avg. 100 iterations time: %.2f minutes" % (avg_100_time))
                         print("Approx. time to completion: %.2f hours" % (estimated_time))
+
+                        try:
+                            os.system("python3 PyGoogleSheet/pyGooSheet.py --step %d --value %.7f" % (i, np.mean(last_100_losses)))
+                        except:
+                            print(colored('Error: ', color='red'), 'fail to update google sheet!')
 
                         start_time_100 = time.time()
                         last_100_losses = []

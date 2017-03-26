@@ -8,7 +8,7 @@ import os
 class DNC:
 
     def __init__(self, controller_class, input_size, output_size, max_sequence_length,
-                 memory_words_num = 256, memory_word_size = 64, memory_read_heads = 4, batch_size = 1):
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
         """
         constructs a complete DNC architecture as described in the DNC paper
         http://www.nature.com/nature/journal/vaop/ncurrent/full/nature20101.html
@@ -32,6 +32,7 @@ class DNC:
         batch_size: int
             the size of the data batch
         """
+        self.testing = testing
 
         self.input_size = input_size
         self.output_size = output_size
@@ -121,7 +122,7 @@ class DNC:
 
 
     def _loop_body(self, time, memory_state, outputs, free_gates, allocation_gates, write_gates,
-                   read_weightings, write_weightings, usage_vectors, controller_state):
+                   read_weightings, write_weightings, usage_vectors, controller_state, *memory_state_record):
         """
         the body of the DNC sequence processing loop
 
@@ -162,11 +163,22 @@ class DNC:
         write_weightings = write_weightings.write(time, output_list[4])
         usage_vectors = usage_vectors.write(time, output_list[1])
 
+        memory_state_list = list(memory_state_record)
+        if self.testing:
+            memory_state_list[0] = memory_state_record[0].write(time, new_memory_state[0])
+            memory_state_list[1] = memory_state_record[1].write(time, new_memory_state[1])
+            memory_state_list[2] = memory_state_record[2].write(time, new_memory_state[2])
+            memory_state_list[3] = memory_state_record[3].write(time, new_memory_state[3])
+            memory_state_list[4] = memory_state_record[4].write(time, new_memory_state[4])
+            memory_state_list[5] = memory_state_record[5].write(time, new_memory_state[5])
+            memory_state_list[6] = memory_state_record[6].write(time, new_memory_state[6])
+
         return (
             time + 1, new_memory_state, outputs,
             free_gates, allocation_gates, write_gates,
             read_weightings, write_weightings,
-            usage_vectors, new_controller_state
+            usage_vectors, new_controller_state,
+            *memory_state_record
         )
 
     def build_graph(self):
@@ -189,6 +201,15 @@ class DNC:
 
         controller_state = self.controller.get_state() if self.controller.has_recurrent_nn else (tf.zeros(1), tf.zeros(1))
         memory_state = self.memory.init_memory()
+        memory_state_record = [
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+        ]
 
         if not isinstance(controller_state, LSTMStateTuple):
             controller_state = LSTMStateTuple(controller_state[0], controller_state[1])
@@ -204,7 +225,7 @@ class DNC:
                 time, memory_state, outputs,
                 free_gates, allocation_gates, write_gates,
                 read_weightings, write_weightings,
-                usage_vectors, controller_state
+                usage_vectors, controller_state, *memory_state_record,
             ),
             parallel_iterations=32,
             swap_memory=True
@@ -216,6 +237,7 @@ class DNC:
 
         with tf.control_dependencies(dependencies):
             self.packed_output = pack_into_tensor(final_results[2], axis=1)
+
             self.packed_memory_view = {
                 'free_gates': pack_into_tensor(final_results[3], axis=1),
                 'allocation_gates': pack_into_tensor(final_results[4], axis=1),
@@ -225,6 +247,15 @@ class DNC:
                 'usage_vectors': pack_into_tensor(final_results[8], axis=1)
             }
 
+            self.packed_memory_matrixs = {
+                'memory_matrix': pack_into_tensor(final_results[11], axis=1),
+                'usage_vector': pack_into_tensor(final_results[12], axis=1),
+                'precedence_vector': pack_into_tensor(final_results[13], axis=1),
+                'link_matrix': pack_into_tensor(final_results[14], axis=1),
+                'write_weighting': pack_into_tensor(final_results[15], axis=1),
+                'read_weightings': pack_into_tensor(final_results[16], axis=1),
+                'read_vectors': pack_into_tensor(final_results[17], axis=1),
+            }
 
     def get_outputs(self):
         """
@@ -236,6 +267,8 @@ class DNC:
         """
         return self.packed_output, self.packed_memory_view
 
+    def get_memoory_states(self):
+        return self.packed_memory_matrixs
 
     def save(self, session, ckpts_dir, name):
         """
@@ -273,7 +306,7 @@ class DNC:
 class DNCPostControl(DNC):
 
     def __init__(self, controller_class, post_controller_class, input_size, output_size, max_sequence_length,
-                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1):
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
         self.post_control = post_controller_class(
             memory_word_size * memory_read_heads + batch_size * output_size,
             output_size, batch_size
@@ -281,7 +314,8 @@ class DNCPostControl(DNC):
 
         super(DNCPostControl, self).__init__(
             controller_class, input_size, output_size, max_sequence_length,
-            memory_words_num=memory_words_num, memory_word_size=memory_word_size, memory_read_heads=memory_read_heads, batch_size=batch_size
+            memory_words_num=memory_words_num, memory_word_size=memory_word_size,
+            memory_read_heads=memory_read_heads, batch_size=batch_size, testing=testing
         )
 
     def _step_op(self, step, memory_state, controller_state=None, post_controller_state=None):
@@ -344,8 +378,8 @@ class DNCPostControl(DNC):
             post_nn_state[1] if nn_state is not None else tf.zeros(1),
         ]
 
-    def _loop_body(self, time, memory_state, outputs, free_gates, allocation_gates, write_gates,
-                   read_weightings, write_weightings, usage_vectors, controller_state, post_controller_state):
+    def _loop_body(self, time, memory_state, outputs, free_gates, allocation_gates, write_gates, read_weightings,
+                   write_weightings, usage_vectors, controller_state, post_controller_state, *memory_state_record):
 
         step_input = self.unpacked_input_data.read(time)
 
@@ -370,11 +404,22 @@ class DNCPostControl(DNC):
         write_weightings = write_weightings.write(time, output_list[4])
         usage_vectors = usage_vectors.write(time, output_list[1])
 
+        memory_state_list = list(memory_state_record)
+        if self.testing:
+            memory_state_list[0] = memory_state_record[0].write(time, new_memory_state[0])
+            memory_state_list[1] = memory_state_record[1].write(time, new_memory_state[1])
+            memory_state_list[2] = memory_state_record[2].write(time, new_memory_state[2])
+            memory_state_list[3] = memory_state_record[3].write(time, new_memory_state[3])
+            memory_state_list[4] = memory_state_record[4].write(time, new_memory_state[4])
+            memory_state_list[5] = memory_state_record[5].write(time, new_memory_state[5])
+            memory_state_list[6] = memory_state_record[6].write(time, new_memory_state[6])
+
         return (
             time + 1, new_memory_state, outputs,
             free_gates, allocation_gates, write_gates,
             read_weightings, write_weightings,
-            usage_vectors, new_controller_state, new_post_controller_state
+            usage_vectors, new_controller_state, new_post_controller_state,
+            *memory_state_list
         )
 
     def build_graph(self):
@@ -397,7 +442,17 @@ class DNCPostControl(DNC):
 
         controller_state = self.controller.get_state() if self.controller.has_recurrent_nn else (tf.zeros(1), tf.zeros(1))
         post_controller_state = self.post_control.get_state()
+
         memory_state = self.memory.init_memory()
+        memory_state_record = [
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+        ]
 
         if not isinstance(controller_state, LSTMStateTuple):
             controller_state = LSTMStateTuple(controller_state[0], controller_state[1])
@@ -415,7 +470,8 @@ class DNCPostControl(DNC):
                 time, memory_state, outputs,
                 free_gates, allocation_gates, write_gates,
                 read_weightings, write_weightings,
-                usage_vectors, controller_state, post_controller_state
+                usage_vectors, controller_state, post_controller_state,
+                *memory_state_record,
             ),
             parallel_iterations=32,
             swap_memory=True
@@ -427,6 +483,7 @@ class DNCPostControl(DNC):
 
         with tf.control_dependencies(dependencies):
             self.packed_output = pack_into_tensor(final_results[2], axis=1)
+
             self.packed_memory_view = {
                 'free_gates': pack_into_tensor(final_results[3], axis=1),
                 'allocation_gates': pack_into_tensor(final_results[4], axis=1),
@@ -436,11 +493,21 @@ class DNCPostControl(DNC):
                 'usage_vectors': pack_into_tensor(final_results[8], axis=1)
             }
 
+            self.packed_memory_matrixs = {
+                'memory_matrix': pack_into_tensor(final_results[11], axis=1),
+                'usage_vector': pack_into_tensor(final_results[12], axis=1),
+                'precedence_vector': pack_into_tensor(final_results[13], axis=1),
+                'link_matrix': pack_into_tensor(final_results[14], axis=1),
+                'write_weighting': pack_into_tensor(final_results[15], axis=1),
+                'read_weightings': pack_into_tensor(final_results[16], axis=1),
+                'read_vectors': pack_into_tensor(final_results[17], axis=1),
+            }
+
 
 class DNCDirectPostControl(DNCPostControl):
 
     def __init__(self, controller_class, post_controller_class, input_size, output_size, max_sequence_length,
-                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1):
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
         self.post_control = post_controller_class(
             input_size + batch_size * output_size,
             output_size, cell_num=512
@@ -448,7 +515,8 @@ class DNCDirectPostControl(DNCPostControl):
 
         super(DNCPostControl, self).__init__(
             controller_class, input_size, output_size, max_sequence_length,
-            memory_words_num=memory_words_num, memory_word_size=memory_word_size, memory_read_heads=memory_read_heads, batch_size=batch_size
+            memory_words_num=memory_words_num, memory_word_size=memory_word_size,
+            memory_read_heads=memory_read_heads, batch_size=batch_size, testing=testing
         )
 
     def _step_op(self, step_input, memory_state, controller_state=None, post_controller_state=None):

@@ -139,18 +139,7 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            ncomputer = DNCDirectPostControl(
-                L2NRecurrentController,
-                PostController,
-                input_size,
-                output_size,
-                sequence_max_length,
-                words_count,
-                word_size,
-                read_heads,
-                batch_size
-            )
-            # ncomputer = DNCPostControl(
+            # ncomputer = DNCDirectPostControl(
             #     L2NRecurrentController,
             #     PostController,
             #     input_size,
@@ -159,13 +148,27 @@ if __name__ == '__main__':
             #     words_count,
             #     word_size,
             #     read_heads,
-            #     batch_size
+            #     batch_size,
             # )
+            ncomputer = DNCPostControl(
+                L2NRecurrentController,
+                PostController,
+                input_size,
+                output_size,
+                sequence_max_length,
+                words_count,
+                word_size,
+                read_heads,
+                batch_size,
+                testing=True
+            )
 
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
             summaries = []
 
             output, memory_view = ncomputer.get_outputs()
+            memory_states = ncomputer.get_memoory_states()
+
             if not use_w2v:
                 softmax_output = tf.nn.softmax(output)
             else:
@@ -192,8 +195,9 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            # samples = np.random.choice(data, 5)
-            samples = data[1689:1695]
+            samples = np.random.choice(data, 5)
+            # samples = data[1689:1695]
+
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
             if is_memview:
@@ -206,6 +210,7 @@ if __name__ == '__main__':
                         video_input = load_video(video_dir + test_file)
                         print(colored('frame count: ', color='yellow'), len(video_input))
                         seq_len = len(video_input) + output_len
+                        input_len = len(video_input)
                     except:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % test_file)
                         continue
@@ -224,9 +229,10 @@ if __name__ == '__main__':
                     print('seqlen: ', seq_len)
                     print('Feed features into DNC.')
 
-                    step_output, mem_tuple = session.run([
+                    step_output, mem_tuple, mem_matrix = session.run([
                         softmax_output,
                         memory_view,
+                        memory_states,
                     ], feed_dict={
                         ncomputer.input_data: input_data,
                         ncomputer.sequence_length: seq_len,
@@ -268,10 +274,14 @@ if __name__ == '__main__':
                         # except:
                         #     print('Cant find in dictionary! ', index)
 
+                    counter = 0
                     for t5 in top5_outputs:
                         for w, s in zip(t5, sentence_5):
+                            if counter == input_len:
+                                s.append('[*]')
                             if s[-1] != w[0]:
                                 s.append(w[0])
+                        counter += 1
 
                     print(colored('Target: ', color='cyan',), target)
 
@@ -287,6 +297,7 @@ if __name__ == '__main__':
                     print('')
                     if is_memview:
                         np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
+                        np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
 
                 except KeyboardInterrupt:
 

@@ -18,3 +18,5 @@ test_logs
 tasks/babi/data
 
 tasks/video/checkpoints
+
+client_secret.json
