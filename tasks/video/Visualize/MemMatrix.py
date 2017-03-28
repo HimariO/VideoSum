@@ -25,37 +25,40 @@ for k in mem_dict.keys():
 
 fig = plt.figure()
 fig2 = plt.figure()
-fig3 = plt.figure()
+# fig3 = plt.figure()
+
 link_mat = mem_dict['link_matrix']
 mem_mat = mem_dict['memory_matrix']
 read_vecs = mem_dict['read_vectors']
 
 ims = []
+ax1 = fig.add_subplot(1, 2, 1)
 for i in range(link_mat.shape[0]):
-    im = plt.imshow(link_mat[i], animated=True)
+    im = ax1.imshow(link_mat[i], animated=True)
     ims.append([im])
 
-ani = animation.ArtistAnimation(fig, ims, interval=75, blit=True, repeat_delay=0)
-plt.colorbar(orientation='vertical')
-ani.save('dynamic_images.mp4', extra_args=['-vcodec', 'libx264', '-pix_fmt', 'yuv420p'])
+ani = animation.ArtistAnimation(fig, ims, interval=75, blit=False, repeat_delay=0)
+# plt.colorbar(orientation='vertical')
+# ani.save('dynamic_images.mp4', extra_args=['-vcodec', 'libx264', '-pix_fmt', 'yuv420p'])
 
 ims = []
+ax2 = fig.add_subplot(1, 2, 2)
 for i in range(mem_mat.shape[0]):
-    im = plt.imshow(mem_mat[i], animated=True)
+    im = ax2.imshow(mem_mat[i], animated=True)
     ims.append([im])
 
-ani2 = animation.ArtistAnimation(fig2, ims, interval=75, blit=True, repeat_delay=0)
-plt.colorbar(orientation='vertical')
+ani2 = animation.ArtistAnimation(fig, ims, interval=75, blit=False, repeat_delay=0)
+# plt.colorbar(orientation='vertical')
 # ani2.save('dynamic_images.mp4')
 # plt.show()
 
 
-# for i in range(4):
-#     a = fig.add_subplot(2, 2, i + 1)
-#     imgplot = plt.imshow(read_vecs[:, :, i])
-#     # imgplot.set_clim(0.0, 0.7)
-#     a.set_title('readhead[%d] read vector(values)' % i)
-#     a.set_ylabel('step')
-#     plt.colorbar(orientation='vertical')
-#
-# plt.show()
+for i in range(4):
+    a = fig2.add_subplot(2, 2, i + 1)
+    imgplot = plt.imshow(read_vecs[:, :, i])
+    # imgplot.set_clim(0.0, 0.7)
+    a.set_title('readhead[%d] read vector(values)' % i)
+    a.set_ylabel('step')
+    plt.colorbar(orientation='vertical')
+
+plt.show()
