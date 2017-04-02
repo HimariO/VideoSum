@@ -12,144 +12,18 @@ import re
 import math
 
 from dnc.dnc import *
-from recurrent_controller import RecurrentController, L2RecurrentController, L2NRecurrentController
+from recurrent_controller import *
 from post_controller import *
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
+from train_until import *
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 w2v_dict_file = './dataset/MSR_enW2V_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 word2v_emb_file = './dataset/MSR_enW2V.npy'
-nlp = spacy.load('en')
-
-
-def load_video(filepath, sample=6):
-    clip = VideoFileClip(filepath)
-    video = []
-
-    skip = 0
-    for frame in clip.iter_frames():
-        skip += 1
-        if skip % sample != 0:
-            continue
-
-        img = Image.fromarray(frame)
-        img = img.resize((224, 224))
-        norm = np.divide(np.array(img), 255)
-        norm = np.reshape(norm, [1, 224, 224, 3])
-        video.append(norm)
-
-    return np.array(video)
-
-
-def llprint(message):
-    print(colored(message, color='blue'))
-
-
-def load(anno_path, dict_path):
-    datas = []
-    dictionary = {'': 0}
-
-    with open(anno_path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            datas.append(row)
-
-    with open(dict_path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            dictionary[row['word']] = int(row['id'])
-
-    return datas, dictionary
-
-
-def onehot(index, size):
-    vec = np.zeros(size, dtype=np.float32)
-    index = index if index < size else size - 1
-    vec[index] = 1.0
-    return vec
-
-
-def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1, word_emb=None, extend_target=False):
-    file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
-    EOS = '<EOS>' if word_emb is None else 'EOS'
-    # some video in annotation does not include in dataset.
-    if not os.path.isfile(file_path):
-        raise OSError(2, 'No such file or directory', file_path)
-    elif type(video_feat) is not np.ndarray:
-        if video_feature == 0 or video_feature == [0]:
-            raise OSError(2, 'Empty data slot!', file_path)
-
-    video_feature = [np.reshape(i, [-1]) for i in video_feature]
-    input_vec = np.array(video_feature[::redu_sample_rate])
-
-    output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
-    output_str = [dictionary[i] for i in output_str]
-    if extend_target:
-        temp = []
-        for s in output_str:
-            for _ in range(3):
-                temp.append(s)
-        output_str = temp
-
-    print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
-
-    # alone_end = False
-    # if math.floor(input_vec.shape[0] / 2) > len(output_str):
-    #     alone_end = True
-    #     seq_len = input_vec.shape[0] + 10
-    # else:
-    #     seq_len = math.floor(input_vec.shape[0] / 2) + len(output_str) + 1 + 10
-    #
-    # if not alone_end:
-    #     output_vec = [np.zeros(word_space_size) for i in range(math.floor(input_vec.shape[0] / 2) + 1)]
-    #     if word_emb is None:
-    #         output_vec = output_vec + [onehot(i, word_space_size) for i in output_str]
-    #     else:
-    #         output_vec = output_vec + [word_emb[i] for i in output_str]
-    #     output_vec = output_vec + [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))]
-    # else:
-    #     if word_emb is None:
-    #         output_vec = [onehot(i, word_space_size) for i in output_str]
-    #     else:
-    #         output_vec = [word_emb[i] for i in output_str]
-    #     output_vec = [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))] + output_vec
-    #
-    # output_vec = np.array(output_vec, dtype=np.float32)
-    #
-    # mask = np.zeros(seq_len, dtype=np.float32)
-    # if not alone_end:
-    #     mask[math.floor(input_vec.shape[0] / 2) + 1:] = 1
-    # else:
-    #     mask[-len(output_str):] = 1
-
-    seq_len = input_vec.shape[0] + len(output_str) + 1
-    output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0] + 1)]
-    if word_emb is None:
-        output_vec += [onehot(i, word_space_size) for i in output_str]
-    else:
-        output_vec += [word_emb[i] for i in output_str]
-    output_vec = np.array(output_vec, dtype=np.float32)
-
-    mask = np.zeros(seq_len, dtype=np.float32)
-    mask[input_vec.shape[0]:] = 1
-
-    if seq_len > input_vec.shape[0]:
-        padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
-        input_vec = np.concatenate([input_vec, padding_i], axis=0)
-
-    print(colored('seq_len: ', color='yellow'), seq_len)
-    # print(colored('input_vec: ', color='yellow'), input_vec.shape)
-    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
-    return (
-        input_vec,
-        np.reshape(output_vec, (1, -1, word_space_size)),
-        seq_len,
-        np.reshape(mask, (1, -1, 1))
-    )
 
 
 if __name__ == '__main__':
@@ -185,11 +59,11 @@ if __name__ == '__main__':
 
     batch_size = 1
     input_size = 4096
-    words_count = 512
-    word_size = 64
+    words_count = 256
+    word_size = 128
     read_heads = 4
 
-    learning_rate = 1e-4
+    learning_rate = 2e-4
     momentum = 0.9
 
     from_checkpoint = None
@@ -243,9 +117,8 @@ if __name__ == '__main__':
             #     read_heads,
             #     batch_size
             # )
-            ncomputer = DNCPostControl(
-                L2NRecurrentController,
-                PostController,
+            ncomputer = DNC(
+                L2N512RnnController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -315,7 +188,7 @@ if __name__ == '__main__':
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
             seq_reapte = 5
-            seq_video_num = 8
+            seq_video_num = 2
 
             for i in range(start, end):
                 data_ID = int(i % data_size)
@@ -335,7 +208,7 @@ if __name__ == '__main__':
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
                         reuse_data_param = int(i / data_size)
-                        seq_video_num = 8 + reuse_data_param * 2
+                        seq_video_num = 2 + reuse_data_param * 2
 
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
@@ -344,7 +217,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, post_padding=3)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_

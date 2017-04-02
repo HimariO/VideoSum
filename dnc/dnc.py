@@ -178,7 +178,7 @@ class DNC:
             free_gates, allocation_gates, write_gates,
             read_weightings, write_weightings,
             usage_vectors, new_controller_state,
-            *memory_state_record
+            *memory_state_list
         )
 
     def build_graph(self):
@@ -246,16 +246,16 @@ class DNC:
                 'write_weightings': pack_into_tensor(final_results[7], axis=1),
                 'usage_vectors': pack_into_tensor(final_results[8], axis=1)
             }
-
-            self.packed_memory_matrixs = {
-                'memory_matrix': pack_into_tensor(final_results[11], axis=1),
-                'usage_vector': pack_into_tensor(final_results[12], axis=1),
-                'precedence_vector': pack_into_tensor(final_results[13], axis=1),
-                'link_matrix': pack_into_tensor(final_results[14], axis=1),
-                'write_weighting': pack_into_tensor(final_results[15], axis=1),
-                'read_weightings': pack_into_tensor(final_results[16], axis=1),
-                'read_vectors': pack_into_tensor(final_results[17], axis=1),
-            }
+            if self.testing:
+                self.packed_memory_matrixs = {
+                    'memory_matrix': pack_into_tensor(final_results[10], axis=1),
+                    'usage_vector': pack_into_tensor(final_results[11], axis=1),
+                    'precedence_vector': pack_into_tensor(final_results[12], axis=1),
+                    'link_matrix': pack_into_tensor(final_results[13], axis=1),
+                    'write_weighting': pack_into_tensor(final_results[14], axis=1),
+                    'read_weightings': pack_into_tensor(final_results[15], axis=1),
+                    'read_vectors': pack_into_tensor(final_results[16], axis=1),
+                }
 
     def get_outputs(self):
         """
@@ -492,16 +492,16 @@ class DNCPostControl(DNC):
                 'write_weightings': pack_into_tensor(final_results[7], axis=1),
                 'usage_vectors': pack_into_tensor(final_results[8], axis=1)
             }
-
-            self.packed_memory_matrixs = {
-                'memory_matrix': pack_into_tensor(final_results[11], axis=1),
-                'usage_vector': pack_into_tensor(final_results[12], axis=1),
-                'precedence_vector': pack_into_tensor(final_results[13], axis=1),
-                'link_matrix': pack_into_tensor(final_results[14], axis=1),
-                'write_weighting': pack_into_tensor(final_results[15], axis=1),
-                'read_weightings': pack_into_tensor(final_results[16], axis=1),
-                'read_vectors': pack_into_tensor(final_results[17], axis=1),
-            }
+            if self.testing:
+                self.packed_memory_matrixs = {
+                    'memory_matrix': pack_into_tensor(final_results[11], axis=1),
+                    'usage_vector': pack_into_tensor(final_results[12], axis=1),
+                    'precedence_vector': pack_into_tensor(final_results[13], axis=1),
+                    'link_matrix': pack_into_tensor(final_results[14], axis=1),
+                    'write_weighting': pack_into_tensor(final_results[15], axis=1),
+                    'read_weightings': pack_into_tensor(final_results[16], axis=1),
+                    'read_vectors': pack_into_tensor(final_results[17], axis=1),
+                }
 
 
 class DNCDirectPostControl(DNCPostControl):

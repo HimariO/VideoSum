@@ -69,3 +69,13 @@ class L2NRecurrentController(BaseController):
 
     def update_state(self, new_state):
         return tf.no_op()
+
+class L2N512RnnController(L2NRecurrentController):
+
+    def network_vars(self):
+        self.layer = 2
+        initializer = tf.contrib.layers.xavier_initializer()
+        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(512)
+        # self.lstm_cell = tf.contrib.rnn.LSTMCell(256, initializer=initializer, use_peepholes=True)
+        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
+        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)

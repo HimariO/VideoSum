@@ -118,8 +118,8 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 512
-    word_size = 64
+    words_count = 256
+    word_size = 128
     read_heads = 4
 
     graph = tf.Graph()
@@ -150,9 +150,8 @@ if __name__ == '__main__':
             #     read_heads,
             #     batch_size,
             # )
-            ncomputer = DNCPostControl(
-                L2NRecurrentController,
-                PostController,
+            ncomputer = DNC(
+                L2N512RnnController,
                 input_size,
                 output_size,
                 sequence_max_length,
