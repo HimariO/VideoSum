@@ -12,6 +12,8 @@ from dnc.dnc import *
 from VGG.vgg19 import Vgg19
 from recurrent_controller import *
 from post_controller import *
+from train_until import *
+from Visualize.CNNs_feat_distribution.get_single_videofeat import Extractor
 
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
@@ -22,55 +24,6 @@ from scipy import spatial
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 video_dir = './dataset/YouTubeClips/'
-
-
-def load_video(filepath, sample=12):
-    if not os.path.isfile(filepath):
-        raise OSError(2, '')
-    clip = VideoFileClip(filepath)
-    video = []
-
-    skip = 0
-    for frame in clip.iter_frames():
-        skip += 1
-        if skip % sample != 0:
-            continue
-
-        img = Image.fromarray(frame)
-        img = img.resize((224, 224))
-        norm = np.divide(np.array(img), 255)
-        norm = np.reshape(norm, [1, 224, 224, 3])
-        video.append(norm)
-
-    return np.array(video)
-
-
-def llprint(message):
-    print(colored(message, color='blue'))
-
-
-def load(anno_path, dict_path):
-    datas = []
-    dictionary = {'': 0}
-
-    with open(anno_path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            datas.append(row)
-
-    with open(dict_path, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            dictionary[row['word']] = int(row['id'])
-
-    return datas, dictionary
-
-
-def onehot(index, size):
-    vec = np.zeros(size, dtype=np.float32)
-    vec[index] = 1.0
-    return vec
-
 
 if __name__ == '__main__':
     tf.logging.set_verbosity(tf.logging.ERROR)
@@ -88,6 +41,7 @@ if __name__ == '__main__':
     is_debug = False
     is_memview = False
     use_w2v = False
+    use_VGG = False
 
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec='])
 
@@ -114,7 +68,7 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 4096  # 100352
+    input_size = 2048  # 100352
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
@@ -130,13 +84,6 @@ if __name__ == '__main__':
                 print(colored('Wrapping session with tfDebugger.', on_color='on_red'))
 
             llprint("Building Computational Graph ... ")
-            llprint("Building VGG ... ")
-
-            vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-            image_holder = tf.placeholder('float32', [1, 224, 224, 3])
-            vgg.build(image_holder)
-
-            llprint("Done!")
             llprint("Building DNC ... ")
 
             # ncomputer = DNCDirectPostControl(
@@ -162,6 +109,11 @@ if __name__ == '__main__':
                 testing=True
             )
 
+            if use_VGG:
+                vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
+                image_holder = tf.placeholder('float32', [1, 224, 224, 3])
+                vgg.build(image_holder)
+
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
             summaries = []
 
@@ -172,9 +124,6 @@ if __name__ == '__main__':
                 softmax_output = tf.nn.softmax(output)
             else:
                 softmax_output = output
-            # for m in memory_view.keys():
-            #     summaries.append(tf.summary.image(m, memory_view[m]))
-            # summerize_op = tf.summary.merge(summaries)
 
             llprint("Done!")
 
@@ -186,6 +135,9 @@ if __name__ == '__main__':
                 llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
                 ncomputer.restore(session, ckpts_dir, from_checkpoint)
                 llprint("Done!")
+
+            if not use_VGG:
+                model = Extractor()
 
             last_100_losses = []
 
@@ -206,7 +158,7 @@ if __name__ == '__main__':
             for test_file, target in zip(videos, vid_targets):
                 try:
                     try:
-                        video_input = load_video(video_dir + test_file)
+                        video_input = load_video(video_dir + test_file, use_VGG=use_VGG)
                         print(colored('frame count: ', color='yellow'), len(video_input))
                         seq_len = len(video_input) + output_len
                         input_len = len(video_input)
@@ -216,10 +168,17 @@ if __name__ == '__main__':
                         # sys.exit(0)
 
                     print('Getting VGG features...')
+
                     input_data = []
+
                     for frame in video_input:
-                        fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
-                        input_data.append(np.reshape(fc6, [-1]))
+                        if use_VGG:
+                            fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
+                            input_data.append(np.reshape(fc6, [-1]))
+                        else:
+                            # print(frame)
+                            feat = model.extract_PIL(Image.fromarray(frame))
+                            input_data.append(np.reshape(feat, [-1]))
 
                     for j in range(seq_len - len(input_data)):  # padding
                         input_data.append(np.zeros([input_size], dtype=np.float32))
@@ -265,13 +224,6 @@ if __name__ == '__main__':
 
                             top5 = [(word_map[ID], word[ID]) for ID in _sorted]
                             top5_outputs.append(top5)
-                        # try:
-                        #     if word_map[index] != last_word:
-                        #         sentence_output += word_map[index] + ' '
-                        #     sentence_indexs.append((index, v))
-                        #     last_word = word_map[index]
-                        # except:
-                        #     print('Cant find in dictionary! ', index)
 
                     counter = 0
                     for t5 in top5_outputs:

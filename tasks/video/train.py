@@ -58,7 +58,7 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 4096
+    input_size = 2048
     words_count = 256
     word_size = 128
     read_heads = 4
@@ -68,7 +68,7 @@ if __name__ == '__main__':
 
     from_checkpoint = None
     iterations = len(data)
-    data_size = 55000
+    data_size = 30000
     start_step = 0
 
     last_sum = 1
@@ -103,7 +103,8 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.AdamOptimizer(learning_rate)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            # optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
             # ncomputer = DNCDirectPostControl(
@@ -173,9 +174,10 @@ if __name__ == '__main__':
                 llprint("Done!")
 
             last_100_losses = []
+            last_avg_min_max = [0, 0, 0]
 
             start = 0 if start_step == 0 else start_step + 1
-            end = data_size * 4
+            end = data_size * 10
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -187,8 +189,8 @@ if __name__ == '__main__':
             current_feat = (None, -1, -1)  # [npy, start_id, end_id]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
-            seq_reapte = 5
-            seq_video_num = 2
+            seq_reapte = 3
+            seq_video_num = 1
 
             for i in range(start, end):
                 data_ID = int(i % data_size)
@@ -207,9 +209,8 @@ if __name__ == '__main__':
                         sys.exit(0)
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
-                        reuse_data_param = int(i / data_size)
-                        seq_video_num = 2 + reuse_data_param * 2
-
+                        reuse_data_param = math.ceil(i / data_size / 2)
+                        seq_video_num = 1 + (reuse_data_param - 1) * 2
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
@@ -217,7 +218,7 @@ if __name__ == '__main__':
                     sample = data[data_ID]
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, post_padding=3)
+                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -261,8 +262,10 @@ if __name__ == '__main__':
                         if first_loss is None:
                             first_loss = loss_value
                         elif (loss_value < first_loss and n >= seq_reapte) or n >= seq_reapte * 10:
-                            if not single_repeat:
+                            if not single_repeat and (not all(last_avg_min_max) or loss_value < 0.045 or True):
                                 break
+                            else:
+                                print(last_avg_min_max[2] * 0.9)
 
                     last_100_losses.append(loss_value)
                     summerizer.add_summary(summary, i)
@@ -271,6 +274,7 @@ if __name__ == '__main__':
                         last_sum = i
                         llprint("   Avg. Cross-Entropy: %.7f" % (np.mean(last_100_losses)))
                         llprint("   Max. %.7f  Min. %.7f" % (max(last_100_losses), min(last_100_losses)))
+                        last_avg_min_max = [np.mean(last_100_losses), min(last_100_losses), max(last_100_losses)]
 
                         end_time_100 = time.time()
                         elapsed_time = (end_time_100 - start_time_100) / 60

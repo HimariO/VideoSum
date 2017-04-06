@@ -9,6 +9,7 @@ from termcolor import colored
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 import csv
+from Visualize.CNNs_feat_distribution.get_single_videofeat import Extractor
 
 def load_video(filepath, sample=6):
     clip = VideoFileClip(filepath)
@@ -39,28 +40,42 @@ with open('./dataset/MSR_en.csv', newline='') as csvfile:
 
 feats = []
 
-start = 0
-end = 202
+start = 200
+end = 50000
 end = end if end < len(datas) else len(datas)
 datas = datas[start:end]
 
 num_per_file = 200
+use_VGG = False
 
 with tf.Session() as sess:
-    vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-    image_holder = tf.placeholder('float', [1, 224, 224, 3])
-    vgg.build(image_holder)
+    if use_VGG:
+        vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
+        image_holder = tf.placeholder('float', [1, 224, 224, 3])
+        vgg.build(image_holder)
+    else:
+        model = Extractor()
 
     for annotation, ind in zip(datas, range(len(datas))):
 
         if os.path.isfile(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])):
             path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
-            frames = load_video(path)
 
             feat = []
-            for f in frames:
-                f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
-                feat.append(f5_3)
+            if use_VGG:
+                frames = load_video(path)
+                for f in frames:
+                    f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
+                    feat.append(f5_3)
+            else:
+                clip = VideoFileClip(path)
+                skip = 6
+                count = 0
+                for f in clip.iter_frames():
+                    count += 1
+                    if count % skip != 0:
+                        continue
+                    feat.append(model.extract_PIL(Image.fromarray(f)))
 
             print('%d / %d' % (start + ind, end))
             feats.append(feat)
@@ -69,8 +84,8 @@ with tf.Session() as sess:
             feats.append([0])
             print(colored('error', color='red'))
         # break  # one time only
-        if ((ind + start) % num_per_file == 0 and ind != 0) or ind == len(datas) - 1:
+        if (len(feats) == num_per_file and ind != 0) or ind == len(datas) - 1:
             feats = np.array(feats)
             print(colored('Start Saving...', color='green'))
-            np.save('dataset/features_%d_%d.npy' % (start + ind - num_per_file, start + ind - 1), feats)
+            np.save('dataset/features_%d_%d.npy' % (start + ind - len(feats) + 1, start + ind), feats)
             feats = []

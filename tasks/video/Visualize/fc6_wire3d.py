@@ -4,18 +4,18 @@ import matplotlib.pyplot as plt
 
 
 def fun(x, y, arr):
-    if y < arr.shape[0] and x < arr.shape[3]:
-        return arr[y, 0, 0, x]
+    if y < arr.shape[0] and x < arr.shape[1]:
+        return arr[y, x]
     return 0
 
 feat = np.load('features.npy')
-feat = feat[0]
+feat = feat
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
 
-x = np.arange(0, 4096, 1)
-y = np.arange(0, feat.shape[0], 1)
+x = np.arange(0, feat.shape[1], 1)  # feat size
+y = np.arange(0, feat.shape[0], 1)  # feat num
 X, Y = np.meshgrid(x, y)
 
 zs = np.array([fun(x, y, feat) for x, y in zip(np.ravel(X), np.ravel(Y))])

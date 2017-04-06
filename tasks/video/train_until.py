@@ -23,7 +23,7 @@ word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
 
 
-def load_video(filepath, sample=6):
+def load_video(filepath, sample=6, use_VGG=True):
     clip = VideoFileClip(filepath)
     video = []
 
@@ -34,10 +34,14 @@ def load_video(filepath, sample=6):
             continue
 
         img = Image.fromarray(frame)
-        img = img.resize((224, 224))
-        norm = np.divide(np.array(img), 255)
-        norm = np.reshape(norm, [1, 224, 224, 3])
-        video.append(norm)
+        img = img.resize((224, 224)) if use_VGG else img.resize((299, 299))
+        if use_VGG:
+            norm = np.divide(np.array(img), 255)
+            norm = np.reshape(norm, [1, 224, 224, 3])
+            video.append(norm)
+        else:
+            # keras will handle input normalization for InceptionV3
+            video.append(np.array(img))
 
     return np.array(video)
 
@@ -119,7 +123,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         mask[:] = 1
 
     if seq_len > input_vec.shape[0]:
-        padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
+        padding_i = np.zeros([seq_len - input_vec.shape[0], 2048], dtype=np.float32)
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     print(colored('seq_len: ', color='yellow'), seq_len)
@@ -187,12 +191,12 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     mask[-len(output_str):] = 1
 
     if seq_len > input_vec.shape[0]:
-        padding_i = np.zeros([seq_len - input_vec.shape[0], 4096], dtype=np.float32)
+        padding_i = np.zeros([seq_len - input_vec.shape[0], 2048], dtype=np.float32)
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     if post_padding > 0:
         output_vec = np.concatenate([output_vec, np.zeros([post_padding, word_space_size])], axis=0)
-        input_vec = np.concatenate([input_vec, np.zeros([post_padding, 4096])], axis=0)
+        input_vec = np.concatenate([input_vec, np.zeros([post_padding, 2048])], axis=0)
         mask = np.concatenate([mask, np.zeros(post_padding)])
         seq_len += post_padding
 

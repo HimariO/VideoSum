@@ -52,7 +52,6 @@ class DNC:
 
         self.build_graph()
 
-
     def _step_op(self, step, memory_state, controller_state=None):
         """
         performs a step operation on the input step data
@@ -350,8 +349,7 @@ class DNCPostControl(DNC):
         )
 
         final_out, post_nn_state = self.post_control.network_op(
-            pre_output,
-            tf.reshape(read_vectors, (-1, self.word_size * self.read_heads)),
+            self.controller.final_output(pre_output, read_vectors),
             post_controller_state
         )
 

@@ -27,9 +27,9 @@ class PostController:
 
         # self.output_W = tf.Variable(tf.random_normal([cell_num, output_size], stddev=0.1), name='post_contorler_Wout')
 
-    def network_op(self, pre_output, flat_read_vectors, state):
+    def network_op(self, final_out, state):
         with tf.variable_scope('post_controller'):
-            X = tf.concat([pre_output, flat_read_vectors], 1)
+            X = final_out
             X = tf.convert_to_tensor(X)
             lstm_out, new_state = self.stack_lstm(X, state)
             final_out = tf.contrib.layers.fully_connected(lstm_out, num_outputs=self.output_size, trainable=True)

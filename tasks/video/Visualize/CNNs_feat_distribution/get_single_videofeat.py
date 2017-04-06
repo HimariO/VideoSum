@@ -14,10 +14,6 @@ import getopt
 import sys
 
 sample_fold = './SampleVidImg'
-options, _ = getopt.getopt(sys.argv[1:], '', ['file='])
-for opt in options:
-    if opt[0] == '--file':
-        video_path = opt[1]
 
 
 class Extractor():
@@ -62,7 +58,6 @@ class Extractor():
 
         # Get the prediction.
         features = self.model.predict(x)
-        print(image_path)
 
         if self.weights is None:
             # For imagenet/default network:
@@ -73,14 +68,14 @@ class Extractor():
 
         return features
 
-    def extract_PIL(self, image):
+    def extract_PIL(self, img):
+        img = img.resize((299, 299))
         x = image.img_to_array(img)
         x = np.expand_dims(x, axis=0)
         x = preprocess_input(x)
 
         # Get the prediction.
         features = self.model.predict(x)
-        print(image_path)
 
         if self.weights is None:
             # For imagenet/default network:
@@ -131,7 +126,7 @@ class VGGExtractor():
 
         # Get the prediction.
         features = self.model.predict(x)
-        print(image_path)
+
         if self.weights is None:
             # For imagenet/default network:
             features = features[0]
@@ -141,14 +136,14 @@ class VGGExtractor():
 
         return features
 
-    def extract_PIL(self, image):
+    def extract_PIL(self, img):
+        img.resize((224, 224))
         x = image.img_to_array(img)
         x = np.expand_dims(x, axis=0)
         x = preprocess_input(x)
 
         # Get the prediction.
         features = self.model.predict(x)
-        print(features.shape)
 
         if self.weights is None:
             # For imagenet/default network:
@@ -161,6 +156,12 @@ class VGGExtractor():
 
 
 if __name__ == '__main__':
+    options, _ = getopt.getopt(sys.argv[1:], '', ['file='])
+
+    for opt in options:
+        if opt[0] == '--file':
+            video_path = opt[1]
+
     clip = VideoFileClip(video_path, audio=False)
 
     coun = 0
@@ -178,7 +179,7 @@ if __name__ == '__main__':
 
         img = Image.fromarray(clip)
         step = 30
-        sample_size = (250, 250)
+        sample_size = (150, 200)
         margin = 80
 
         for x in range(0 + margin, img.size[0] - sample_size[0] - margin, step):
