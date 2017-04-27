@@ -72,9 +72,9 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 256
-    word_size = 128
-    read_heads = 4
+    words_count = 40
+    word_size = 900
+    read_heads = 3
 
     graph = tf.Graph()
     with graph.as_default():
@@ -86,7 +86,7 @@ if __name__ == '__main__':
             llprint("Building Computational Graph ... ")
             llprint("Building DNC ... ")
 
-            # ncomputer = DNCDirectPostControl(
+            # ncomputer = DNCPostControl(
             #     L2NRecurrentController,
             #     PostController,
             #     input_size,
@@ -96,9 +96,10 @@ if __name__ == '__main__':
             #     word_size,
             #     read_heads,
             #     batch_size,
+            #     testing=True
             # )
             ncomputer = DNC(
-                L2N512RnnController,
+                RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -152,8 +153,8 @@ if __name__ == '__main__':
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
             if is_memview:
-                videos = ['Ugb_uH72d0I_8_17.avi']
-                # videos = ['eZLxohGP4IE_15_25.avi']
+                # videos = ['Ugb_uH72d0I_8_17.avi']
+                videos = ['eZLxohGP4IE_15_25.avi']
 
             for test_file, target in zip(videos, vid_targets):
                 try:
@@ -226,6 +227,7 @@ if __name__ == '__main__':
                             top5_outputs.append(top5)
 
                     counter = 0
+
                     for t5 in top5_outputs:
                         for w, s in zip(t5, sentence_5):
                             if counter == input_len:
@@ -236,7 +238,7 @@ if __name__ == '__main__':
 
                     print(colored('Target: ', color='cyan',), target)
 
-                    for sent in sentence_5:
+                    for sent in sentence_5[:3]:
                         out = ''
                         for w in sent:
                             out += w + ' '
@@ -249,6 +251,7 @@ if __name__ == '__main__':
                     if is_memview:
                         np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
                         np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
+                        np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
 
                 except KeyboardInterrupt:
 

@@ -32,7 +32,7 @@ class BaseController:
         # by the existence of recurrent_update and get_state methods
         has_recurrent_update = callable(getattr(self, 'update_state', None))
         has_get_state = callable(getattr(self, 'get_state', None))
-        self.has_recurrent_nn =  has_recurrent_update and has_get_state
+        self.has_recurrent_nn = has_recurrent_update and has_get_state
 
         # the actual size of the neural network input after flatenning and
         # concatenating the input vector with the previously read vctors from memory

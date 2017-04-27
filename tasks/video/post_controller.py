@@ -21,7 +21,7 @@ class PostController:
         self.batch_size = batch_size
 
         # self.lstm_cell = tf.contrib.rnn.LSTMCell(cell_num, use_peepholes=True)
-        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(256)
+        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(512, dropout_keep_prob=0.5)
         self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * layer)
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
 

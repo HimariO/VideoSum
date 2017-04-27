@@ -42,8 +42,8 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
 
-    w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
-    # w2v_emb = None
+    # w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
+    w2v_emb = None
 
     if w2v_emb is None:
         data, lexicon_dict = load(anno_file, dict_file)
@@ -59,11 +59,11 @@ if __name__ == '__main__':
 
     batch_size = 1
     input_size = 2048
-    words_count = 256
-    word_size = 128
-    read_heads = 4
+    words_count = 40
+    word_size = 900
+    read_heads = 3
 
-    learning_rate = 2e-4
+    learning_rate = 1e-3
     momentum = 0.9
 
     from_checkpoint = None
@@ -103,11 +103,11 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
-            # optimizer = tf.train.AdamOptimizer(learning_rate)
+            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            # ncomputer = DNCDirectPostControl(
+            # ncomputer = DNCPostControl(
             #     L2NRecurrentController,
             #     PostController,
             #     input_size,
@@ -119,7 +119,7 @@ if __name__ == '__main__':
             #     batch_size
             # )
             ncomputer = DNC(
-                L2N512RnnController,
+                RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -134,11 +134,12 @@ if __name__ == '__main__':
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
             if w2v_emb is None:
-                loss = tf.reduce_mean(
-                    loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
-                )
+                # loss = tf.reduce_mean(
+                #     loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                # )
+                loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)) / tf.reduce_sum(loss_weights)
             else:
-                loss = tf.contrib.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
+                loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
             # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
             summeries = []
@@ -177,7 +178,7 @@ if __name__ == '__main__':
             last_avg_min_max = [0, 0, 0]
 
             start = 0 if start_step == 0 else start_step + 1
-            end = data_size * 10
+            end = data_size * 25
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -190,7 +191,7 @@ if __name__ == '__main__':
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
             seq_reapte = 3
-            seq_video_num = 1
+            seq_video_num = 1 if not single_repeat else 8
 
             for i in range(start, end):
                 data_ID = int(i % data_size)
@@ -210,7 +211,7 @@ if __name__ == '__main__':
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
                         reuse_data_param = math.ceil(i / data_size / 2)
-                        seq_video_num = 1 + (reuse_data_param - 1) * 2
+                        seq_video_num = 1 + ((reuse_data_param - 1) * 1) % 1
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
@@ -219,6 +220,8 @@ if __name__ == '__main__':
                     video_feat = current_feat[0][data_ID - current_feat[1]]
                     try:
                         input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                        if seq_len_ > 100:
+                            continue
 
                         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -249,7 +252,7 @@ if __name__ == '__main__':
                         loss_value, _, summary = session.run([
                             loss,
                             apply_gradients,
-                            summerize_op if summerize else no_summerize
+                            summerize_op if summerize else no_summerize,
                         ], feed_dict={
                             ncomputer.input_data: np.array([input_data]),
                             ncomputer.target_output: target_outputs,
@@ -261,11 +264,9 @@ if __name__ == '__main__':
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
-                        elif (loss_value < first_loss and n >= seq_reapte) or n >= seq_reapte * 10:
+                        elif (n >= seq_reapte) or n >= seq_reapte * 10:
                             if not single_repeat and (not all(last_avg_min_max) or loss_value < 0.045 or True):
                                 break
-                            else:
-                                print(last_avg_min_max[2] * 0.9)
 
                     last_100_losses.append(loss_value)
                     summerizer.add_summary(summary, i)

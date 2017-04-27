@@ -8,6 +8,7 @@ from termcolor import colored
 
 import getopt
 import sys
+import os
 
 
 base_point = [
@@ -28,6 +29,8 @@ base_point = [
     './SampleVidImg/1440_[530_200].jpg',
 ]
 
+base_point_2 = ['./Crops/' + f for f in os.listdir(path='./Crops') if f[-3:] == 'jpg']
+
 img_list = np.load('img_list.npy')
 incep3 = np.load('InceptionV3_feats.npy')
 sort_ = np.load('mean_dif_IDsort.npy')
@@ -39,22 +42,30 @@ for i in range(len(base_point)):
     part_feat = [ori_feat[j] for j in sort_[-150:]]
     base_vecs.append(np.array(part_feat))
 
-result_fold = './Picked'
 options, _ = getopt.getopt(sys.argv[1:], '', ['file='])
 
 for opt in options:
     if opt[0] == '--file':
         video_path = opt[1]
 
+result_fold = './' + video_path.split('.')[0]
+if not os.path.exists(result_fold):
+    os.mkdir(result_fold)
+
 if __name__ == '__main__':
     clip = VideoFileClip(video_path, audio=False)
 
     coun = 0
-    max_frame_cout = 100
-    start_count = 60 * 100  # 60 fps * 40 sec
+    max_frame_cout = 10000
+    start_count = 0  # 60 fps * 40 sec
 
     imgs_path = []
     model = Extractor()
+
+    for f in base_point_2:
+        ori_feat = model.extract(f)
+        part_feat = [ori_feat[j] for j in sort_[-150:]]
+        base_vecs.append(np.array(part_feat))
 
     for clip in clip.iter_frames():
         coun += 1
@@ -86,7 +97,7 @@ if __name__ == '__main__':
                 min_dice = min(
                     [np.linalg.norm(base_vecs[i] - part_feat) for i in range(len(base_point))]
                 )
-                print('%d_[%d_%d] ' % (coun, x, y), min_dice)
+                print('[%d]  %d_[%d_%d] ' % (len(imgs_path), coun, x, y), min_dice)
 
                 if min_dice < 4.5:
                     crop.save(result_fold + '/%d_[%d_%d].jpg' % (coun, x, y))

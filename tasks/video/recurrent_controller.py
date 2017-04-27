@@ -12,7 +12,7 @@ class RecurrentController(BaseController):
 
     def network_vars(self):
         with tf.variable_scope('LSTM_Controller'):
-            self.lstm_cell = tf.contrib.rnn.LSTMCell(256)
+            self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(1300, dropout_keep_prob=0.5)
             self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
 
     def network_op(self, X, state):
@@ -76,7 +76,7 @@ class L2N512RnnController(L2NRecurrentController):
     def network_vars(self):
         self.layer = 2
         initializer = tf.contrib.layers.xavier_initializer()
-        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(768)
+        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(768, dropout_keep_prob=0.5)
         # self.lstm_cell = tf.contrib.rnn.LSTMCell(256, initializer=initializer, use_peepholes=True)
         self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)

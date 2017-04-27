@@ -35,7 +35,7 @@ a.set_ylabel('step')
 plt.colorbar(orientation='vertical')
 # plt.colorbar(ticks=[0.1, 0.3, 0.5, 0.7], orientation='horizontal')
 
-for i in range(4):
+for i in range(Wr.shape[-1]):
     a = fig.add_subplot(2, 3, 3 + i)
     imgplot = plt.imshow(Wr[:, :, i])
     # imgplot.set_clim(0.0, 0.7)
@@ -62,7 +62,7 @@ a.set_title('write_gates')
 a.set_xlabel('step')
 plt.colorbar(orientation='horizontal')
 
-for i in range(4):
+for i in range(Gf.shape[-1]):
     a = fig2.add_subplot(2, 3, 3 + i)
     imgplot = plt.imshow(Gf[:, :, i])
     a.set_title('free_gates[%d]' % i)
