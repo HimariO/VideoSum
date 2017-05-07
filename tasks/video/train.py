@@ -59,11 +59,11 @@ if __name__ == '__main__':
 
     batch_size = 1
     input_size = 2048
-    words_count = 40
-    word_size = 900
-    read_heads = 3
+    words_count = 50
+    word_size = 774
+    read_heads = 4
 
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     momentum = 0.9
 
     from_checkpoint = None
@@ -107,19 +107,9 @@ if __name__ == '__main__':
             optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            # ncomputer = DNCPostControl(
-            #     L2NRecurrentController,
-            #     PostController,
-            #     input_size,
-            #     output_size,
-            #     sequence_max_length,
-            #     words_count,
-            #     word_size,
-            #     read_heads,
-            #     batch_size
-            # )
-            ncomputer = DNC(
-                RecurrentController,
+            ncomputer = DNCDirectPostControl(
+                L2RecurrentController,
+                DirectPostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -128,6 +118,16 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
+            # ncomputer = DNC(
+            #     RecurrentController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
 
             output, _ = ncomputer.get_outputs()
 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
             last_avg_min_max = [0, 0, 0]
 
             start = 0 if start_step == 0 else start_step + 1
-            end = data_size * 25
+            end = 900000
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -190,7 +190,7 @@ if __name__ == '__main__':
             current_feat = (None, -1, -1)  # [npy, start_id, end_id]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
-            seq_reapte = 3
+            seq_reapte = 1
             seq_video_num = 1 if not single_repeat else 8
 
             for i in range(start, end):
@@ -264,8 +264,9 @@ if __name__ == '__main__':
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
-                        elif (n >= seq_reapte) or n >= seq_reapte * 10:
-                            if not single_repeat and (not all(last_avg_min_max) or loss_value < 0.045 or True):
+
+                        if (n >= seq_reapte) or n >= seq_reapte * 10:
+                            if not single_repeat and (not all(last_avg_min_max) or True):
                                 break
 
                     last_100_losses.append(loss_value)
@@ -294,7 +295,7 @@ if __name__ == '__main__':
                         start_time_100 = time.time()
                         last_100_losses = []
 
-                    if i - last_log >= 400:
+                    if i - last_log >= 500:
                         last_log = i
                         llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))

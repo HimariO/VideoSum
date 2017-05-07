@@ -311,11 +311,25 @@ class DNCPostControl(DNC):
             output_size, batch_size
         )
 
-        super(DNCPostControl, self).__init__(
-            controller_class, input_size, output_size, max_sequence_length,
-            memory_words_num=memory_words_num, memory_word_size=memory_word_size,
-            memory_read_heads=memory_read_heads, batch_size=batch_size, testing=testing
-        )
+        self.testing = testing
+
+        self.input_size = input_size
+        self.output_size = output_size
+        self.max_sequence_length = max_sequence_length
+        self.words_num = memory_words_num
+        self.word_size = memory_word_size
+        self.read_heads = memory_read_heads
+        self.batch_size = batch_size
+
+        self.memory = Memory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.controller = controller_class(self.input_size, self.input_size, self.read_heads, self.word_size, self.batch_size)
+
+        # input data placeholders
+        self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
+        self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
+
+        self.build_graph()
 
     def _step_op(self, step, memory_state, controller_state=None, post_controller_state=None):
 
@@ -507,15 +521,29 @@ class DNCDirectPostControl(DNCPostControl):
     def __init__(self, controller_class, post_controller_class, input_size, output_size, max_sequence_length,
                  memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
         self.post_control = post_controller_class(
-            input_size + batch_size * output_size,
+            input_size + batch_size * input_size,
             output_size, cell_num=512
         )
 
-        super(DNCPostControl, self).__init__(
-            controller_class, input_size, output_size, max_sequence_length,
-            memory_words_num=memory_words_num, memory_word_size=memory_word_size,
-            memory_read_heads=memory_read_heads, batch_size=batch_size, testing=testing
-        )
+        self.testing = testing
+
+        self.input_size = input_size
+        self.output_size = output_size
+        self.max_sequence_length = max_sequence_length
+        self.words_num = memory_words_num
+        self.word_size = memory_word_size
+        self.read_heads = memory_read_heads
+        self.batch_size = batch_size
+
+        self.memory = Memory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.controller = controller_class(self.input_size, self.post_control.cell_num, self.read_heads, self.word_size, self.batch_size)
+
+        # input data placeholders
+        self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
+        self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
+
+        self.build_graph()
 
     def _step_op(self, step_input, memory_state, controller_state=None, post_controller_state=None):
 

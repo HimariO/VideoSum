@@ -32,7 +32,6 @@ if __name__ == '__main__':
     data_dir = os.path.join(dirname, 'data', 'en-10k')
     tb_logs_dir = os.path.join(dirname, 'test_logs')
 
-
     learning_rate = 1e-4
     momentum = 0.9
     output_len = 50
@@ -72,9 +71,9 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 40
-    word_size = 900
-    read_heads = 3
+    words_count = 50
+    word_size = 774
+    read_heads = 4
 
     graph = tf.Graph()
     with graph.as_default():
@@ -86,20 +85,9 @@ if __name__ == '__main__':
             llprint("Building Computational Graph ... ")
             llprint("Building DNC ... ")
 
-            # ncomputer = DNCPostControl(
-            #     L2NRecurrentController,
-            #     PostController,
-            #     input_size,
-            #     output_size,
-            #     sequence_max_length,
-            #     words_count,
-            #     word_size,
-            #     read_heads,
-            #     batch_size,
-            #     testing=True
-            # )
-            ncomputer = DNC(
-                RecurrentController,
+            ncomputer = DNCDirectPostControl(
+                L2RecurrentController,
+                DirectPostController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -109,13 +97,24 @@ if __name__ == '__main__':
                 batch_size,
                 testing=True
             )
+            # ncomputer = DNC(
+            #     RecurrentController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size,
+            #     testing=True
+            # )
 
             if use_VGG:
                 vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
                 image_holder = tf.placeholder('float32', [1, 224, 224, 3])
                 vgg.build(image_holder)
 
-            summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
+            # summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
             summaries = []
 
             output, memory_view = ncomputer.get_outputs()
@@ -147,14 +146,14 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            samples = np.random.choice(data, 5)
+            samples = np.random.choice(data[:30000], 5)
             # samples = data[1689:1695]
 
             videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
             vid_targets = [f['Description'] for f in samples]
             if is_memview:
-                # videos = ['Ugb_uH72d0I_8_17.avi']
-                videos = ['eZLxohGP4IE_15_25.avi']
+                videos = ['Ugb_uH72d0I_8_17.avi']
+                # videos = ['eZLxohGP4IE_15_25.avi']
 
             for test_file, target in zip(videos, vid_targets):
                 try:

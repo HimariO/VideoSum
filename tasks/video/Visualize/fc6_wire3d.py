@@ -10,6 +10,8 @@ def fun(x, y, arr):
 
 feat = np.load('features.npy')
 feat = feat
+feat_scale = feat.tolist() * 10
+feat_scale = sorted(feat_scale)  # not really sorting feature by frame, just putting same feature togather.
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
@@ -28,4 +30,5 @@ ax.set_xlabel('FC6 Feature')
 ax.set_ylabel('Video Frame')
 ax.set_zlabel('Feature Value')
 
+plt.imshow(feat_scale)
 plt.show()
