@@ -71,13 +71,16 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 50
+    words_count = 60
     word_size = 774
-    read_heads = 4
+    read_heads = 2
 
     graph = tf.Graph()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+
     with graph.as_default():
-        with tf.Session(graph=graph) as session:
+        with tf.Session(graph=graph, config=config) as session:
             if is_debug:
                 session = tf_db.LocalCLIDebugWrapperSession(session)
                 print(colored('Wrapping session with tfDebugger.', on_color='on_red'))
@@ -86,7 +89,7 @@ if __name__ == '__main__':
             llprint("Building DNC ... ")
 
             ncomputer = DNCDirectPostControl(
-                L2RecurrentController,
+                MemRNNController,
                 DirectPostController,
                 input_size,
                 output_size,

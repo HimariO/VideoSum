@@ -29,9 +29,13 @@ class RecurrentController(BaseController):
 class L2RecurrentController(BaseController):
 
     def network_vars(self):
-        self.layer = 1
-        self.initializer = tf.random_normal_initializer(stddev=2 / (self.output_size + self.input_size))
-        self.lstm_cell = tf.contrib.rnn.LSTMCell(1024, initializer=self.initializer, use_peepholes=True)
+        self.layer = 2
+        self.node = 1024
+
+        # self.initializer = tf.random_normal_initializer(stddev=2 / (self.input_size))
+        self.initializer = tf.orthogonal_initializer()
+
+        self.lstm_cell = tf.contrib.rnn.LSTMCell(self.node, initializer=self.initializer)
         self.lstm_cell = tf.contrib.rnn.DropoutWrapper(self.lstm_cell, output_keep_prob=0.5)
 
         if self.layer > 1:

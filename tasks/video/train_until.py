@@ -105,6 +105,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         output_str = temp
 
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
+    input_len, output_len = input_vec.shape[0], len(output_str)
 
     seq_len = input_vec.shape[0] + len(output_str)
     output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0])]
@@ -130,9 +131,9 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
     # print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
-        input_vec,
+        np.reshape(input_vec, (1, -1, input_vec.shape[1])),
         np.reshape(output_vec, (1, -1, word_space_size)),
-        seq_len,
+        {'seq_len': seq_len, 'input_len': input_len, 'output_len': output_len},
         np.reshape(mask, (1, -1, 1))
     )
 
@@ -173,6 +174,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
         output_str = temp
 
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
+    input_len, output_len = input_vec.shape[0], len(output_str)
 
     over_lap = 3 if min([len(output_str), input_vec.shape[0]]) >= 3 else min([len(output_str), input_vec.shape[0]])
 
@@ -204,8 +206,82 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     print(colored('input_vec: ', color='yellow'), input_vec.shape)
     print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
-        input_vec,
+        np.reshape(input_vec, (1, -1, input_vec.shape[1])),
         np.reshape(output_vec, (1, -1, word_space_size)),
-        seq_len,
+        {'seq_len': seq_len, 'input_len': input_len, 'output_len': output_len},
         np.reshape(mask, (1, -1, 1))
+    )
+
+
+def prepare_batch(annotations, dictionary, video_features, redu_sample_rate=1,
+                  word_emb=None, extend_target=False, setMask=True):
+    """
+    Put batch of label and features into a single nparray.
+    annotations: list of annotations with size of 'batch_size'
+    video_features: list of featrues with size of 'batch_size'
+
+    Input will became:
+    [
+        [0, 0, I, I, I, 0, 0, 0 ,0],  Each row is single input sequce pair with lable output.
+        [I, I, I, I, I, 0, 0, 0 ,0],
+        [0, 0, 0, I, I, 0, 0, 0 ,0],
+    ]
+
+    Output will became:
+    [
+        [0, 0, 0, 0, 0, Y, 0, 0 ,0],
+        [0, 0, 0, 0, 0, Y, Y, Y ,0],
+        [0, 0, 0, 0, 0, Y, Y, Y ,Y],
+    ]
+    """
+
+    input_data = None
+    target_outputs = None
+    seq_len = None
+    mask = None
+
+    word_space_size = len(dictionary) if word_emb is None else word_emb.shape[1]
+    none_padded = []
+
+    for video_feature, annotation in zip(video_features, annotations):
+        try:
+            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+        except OSError:
+            input_data_ = np.zeros([1, 2, 2048])
+            target_outputs_ = np.zeros([1, 2, word_space_size])
+            seq_len_ = {'seq_len': 2, 'input_len': 1, 'output_len': 1}
+            mask_ = np.zeros([1, 2, 1])
+
+        none_padded.append([input_data_, target_outputs_, seq_len_, mask_])
+
+    max_in = max(none_padded, key=lambda x: x[2]['input_len'])[2]['input_len']
+    max_out = max(none_padded, key=lambda x: x[2]['output_len'])[2]['output_len']
+    seq_len = max_seq = max_in + max_out
+
+    for data in none_padded:
+        input_data_, target_outputs_, seq_len_, mask_ = data[0], data[1], data[2], data[3]
+
+        left_pad = max_in - seq_len_['input_len']
+        right_pad = max_out - seq_len_['output_len']
+
+        input_data_ = np.concatenate([np.zeros([1, left_pad, 2048]), input_data_, np.zeros([1, right_pad, 2048])], axis=1)
+        target_outputs_ = np.concatenate([np.zeros([1, left_pad, word_space_size]), target_outputs_, np.zeros([1, right_pad, word_space_size])], axis=1)
+        mask_ = np.concatenate(
+            [
+                np.zeros([1, max_in - seq_len_['input_len'], 1]),
+                mask_,
+                np.zeros([1, max_out - seq_len_['output_len'], 1]),
+            ],
+            axis=1
+        )
+
+        input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
+        target_outputs = np.concatenate([target_outputs, target_outputs_], axis=0) if target_outputs is not None else target_outputs_
+        mask = np.concatenate([mask, mask_], axis=0) if mask is not None else mask_
+
+    return (
+        input_data,
+        target_outputs,
+        {'seq_len': seq_len},
+        mask
     )

@@ -289,7 +289,6 @@ class DNC:
 
         tf.train.Saver(tf.trainable_variables()).save(session, os.path.join(checkpoint_dir, 'model.ckpt'))
 
-
     def restore(self, session, ckpts_dir, name):
         """
         session: tf.Session

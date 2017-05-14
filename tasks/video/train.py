@@ -59,16 +59,16 @@ if __name__ == '__main__':
 
     batch_size = 1
     input_size = 2048
-    words_count = 50
-    word_size = 774
-    read_heads = 4
+    words_count = 256
+    word_size = 1024
+    read_heads = 2
 
-    learning_rate = 1e-4
+    learning_rate = 2e-4
     momentum = 0.9
 
     from_checkpoint = None
     iterations = len(data)
-    data_size = 30000
+    data_size = 40000
     start_step = 0
 
     last_sum = 1
@@ -95,31 +95,24 @@ if __name__ == '__main__':
             single_repeat = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+
     with graph.as_default():
-        with tf.Session(graph=graph) as session:
+        with tf.Session(graph=graph, config=config) as session:
 
             llprint("Building Computational Graph ... ")
 
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
-            optimizer = tf.train.AdamOptimizer(learning_rate)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            # optimizer = tf.train.AdamOptimizer(learning_rate)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            ncomputer = DNCDirectPostControl(
-                L2RecurrentController,
-                DirectPostController,
-                input_size,
-                output_size,
-                sequence_max_length,
-                words_count,
-                word_size,
-                read_heads,
-                batch_size
-            )
-            # ncomputer = DNC(
-            #     RecurrentController,
+            # ncomputer = DNCDirectPostControl(
+            #     MemRNNController,
+            #     DirectPostController,
             #     input_size,
             #     output_size,
             #     sequence_max_length,
@@ -128,6 +121,16 @@ if __name__ == '__main__':
             #     read_heads,
             #     batch_size
             # )
+            ncomputer = DNC(
+                L2RecurrentController,
+                input_size,
+                output_size,
+                sequence_max_length,
+                words_count,
+                word_size,
+                read_heads,
+                batch_size
+            )
 
             output, _ = ncomputer.get_outputs()
 
@@ -216,16 +219,27 @@ if __name__ == '__main__':
                     llprint("\rIteration %d/%d" % (i, end))
 
                     # sample = np.random.choice(data, 1)
-                    sample = data[data_ID]
-                    video_feat = current_feat[0][data_ID - current_feat[1]]
-                    try:
-                        input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
-                        if seq_len_ > 100:
-                            continue
+                    file_index = data_ID - current_feat[1]
 
-                        input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
+                    if batch_size == 1:
+                        sample = data[data_ID]
+                        video_feat = current_feat[0][file_index]
+                    else:
+                        sample = data[data_ID: data_ID + batch_size]
+                        video_feat = current_feat[0][file_index: file_index + batch_size]
+                        if len(video_feat) < batch_size:
+                            temp = current_feat[0][:batch_size - len(video_feat)]
+                            video_feat = np.concatenate([video_feat, temp])
+
+                    try:
+                        if batch_size == 1:
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                        else:
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+
+                        input_data = np.concatenate([input_data, input_data_], axis=1) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
-                        seq_len = seq_len + seq_len_ if seq_len is not None else seq_len_
+                        seq_len = seq_len + seq_len_['seq_len'] if seq_len is not None else seq_len_['seq_len']
                         mask = np.concatenate([mask, mask_], axis=1) if mask is not None else mask_
                         included_vid += 1
 
@@ -254,13 +268,13 @@ if __name__ == '__main__':
                             apply_gradients,
                             summerize_op if summerize else no_summerize,
                         ], feed_dict={
-                            ncomputer.input_data: np.array([input_data]),
+                            ncomputer.input_data: input_data,
                             ncomputer.target_output: target_outputs,
                             ncomputer.sequence_length: seq_len,
                             loss_weights: mask
                         })
 
-                        print(colored('[%d]loss: ' % n, color='yellow'), loss_value)
+                        print(colored('[%d]loss: ' % n, color='green'), loss_value)
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
