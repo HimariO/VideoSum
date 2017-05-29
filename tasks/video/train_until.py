@@ -75,7 +75,7 @@ def onehot(index, size):
 
 
 def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                   word_emb=None, extend_target=False, setMask=True):
+                   word_emb=None, extend_target=False, setMask=True, concat_input=False):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
 
@@ -95,8 +95,14 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
 
+    if concat_input:
+        prev_input = np.array(video_feature[::redu_sample_rate][1:])
+        prev_input = np.concatenate([np.zeros([1, input_vec.shape[1]]), prev_input], axis=0)
+        input_vec = np.concatenate([input_vec, prev_input], axis=1)
+
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
     output_str = [dictionary[i] for i in output_str]
+
     if extend_target:
         temp = []
         for s in output_str:
@@ -124,7 +130,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         mask[:] = 1
 
     if seq_len > input_vec.shape[0]:
-        padding_i = np.zeros([seq_len - input_vec.shape[0], 2048], dtype=np.float32)
+        padding_i = np.zeros([seq_len - input_vec.shape[0], input_vec.shape[1]], dtype=np.float32)
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     print(colored('seq_len: ', color='yellow'), seq_len)
@@ -139,7 +145,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
 
 def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                      word_emb=None, extend_target=False, setMask=True, post_padding=0):
+                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False):
     """
     output input-output pair with overlay timestep.
     input_vector = [D, D, D, D, D, 0, 0, 0, 0]
@@ -164,6 +170,11 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
 
+    if concat_input:
+        prev_input = np.array(video_feature[::redu_sample_rate][1:])
+        prev_input = np.concatenate([np.zeros([1, input_vec.shape[1]]), prev_input], axis=0)
+        input_vec = np.concatenate([input_vec, prev_input], axis=1)
+
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
     output_str = [dictionary[i] for i in output_str]
     if extend_target:
@@ -176,7 +187,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
     input_len, output_len = input_vec.shape[0], len(output_str)
 
-    over_lap = 3 if min([len(output_str), input_vec.shape[0]]) >= 3 else min([len(output_str), input_vec.shape[0]])
+    over_lap = 5 if min([len(output_str), input_vec.shape[0]]) >= 5 else min([len(output_str), input_vec.shape[0]])
 
     seq_len = input_vec.shape[0] + len(output_str) - over_lap
 
@@ -193,7 +204,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     mask[-len(output_str):] = 1
 
     if seq_len > input_vec.shape[0]:
-        padding_i = np.zeros([seq_len - input_vec.shape[0], 2048], dtype=np.float32)
+        padding_i = np.zeros([seq_len - input_vec.shape[0], input_vec.shape[1]], dtype=np.float32)
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     if post_padding > 0:
@@ -203,8 +214,8 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
         seq_len += post_padding
 
     print(colored('seq_len: ', color='yellow'), seq_len)
-    print(colored('input_vec: ', color='yellow'), input_vec.shape)
-    print(colored('output_vec: ', color='yellow'), output_vec.shape)
+    # print(colored('input_vec: ', color='yellow'), input_vec.shape)
+    # print(colored('output_vec: ', color='yellow'), output_vec.shape)
     return (
         np.reshape(input_vec, (1, -1, input_vec.shape[1])),
         np.reshape(output_vec, (1, -1, word_space_size)),
@@ -285,3 +296,13 @@ def prepare_batch(annotations, dictionary, video_features, redu_sample_rate=1,
         {'seq_len': seq_len},
         mask
     )
+
+
+def inputConcat(input_vec):
+    prev_input = input_vec[1:]
+    prev_input = np.concatenate([np.zeros([1, input_vec.shape[1]]), prev_input], axis=0)
+    print(prev_input.shape)
+    print(input_vec.shape)
+    input_vec = np.concatenate([input_vec, prev_input], axis=1)
+    print(input_vec.shape)
+    return input_vec

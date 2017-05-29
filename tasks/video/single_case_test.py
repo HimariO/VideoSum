@@ -41,8 +41,10 @@ if __name__ == '__main__':
     is_memview = False
     use_w2v = False
     use_VGG = False
+    concat_inp = True
+    device_choose = '/gpu:0'
 
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec='])
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec=', 'device='])
 
     for opt in options:
         if opt[0] == '--checkpoint':
@@ -56,6 +58,9 @@ if __name__ == '__main__':
         elif opt[0] == '--word2vec':
             lowerc = opt[1].lower()
             use_w2v = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--device':
+            lowerc = opt[1].lower()
+            device_choose = lowerc
 
     llprint("Loading Data ... ")
     w2v_emb = None
@@ -67,195 +72,215 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 2048  # 100352
+    input_size = 2048 * 2  # 100352
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 60
-    word_size = 774
+    words_count = 256
+    word_size = 1024
     read_heads = 2
 
     graph = tf.Graph()
-    config = tf.ConfigProto()
+    config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
 
     with graph.as_default():
         with tf.Session(graph=graph, config=config) as session:
-            if is_debug:
-                session = tf_db.LocalCLIDebugWrapperSession(session)
-                print(colored('Wrapping session with tfDebugger.', on_color='on_red'))
+            with tf.device(device_choose):
 
-            llprint("Building Computational Graph ... ")
-            llprint("Building DNC ... ")
+                if is_debug:
+                    session = tf_db.LocalCLIDebugWrapperSession(session)
+                    print(colored('Wrapping session with tfDebugger.', on_color='on_red'))
 
-            ncomputer = DNCDirectPostControl(
-                MemRNNController,
-                DirectPostController,
-                input_size,
-                output_size,
-                sequence_max_length,
-                words_count,
-                word_size,
-                read_heads,
-                batch_size,
-                testing=True
-            )
-            # ncomputer = DNC(
-            #     RecurrentController,
-            #     input_size,
-            #     output_size,
-            #     sequence_max_length,
-            #     words_count,
-            #     word_size,
-            #     read_heads,
-            #     batch_size,
-            #     testing=True
-            # )
+                print(colored('Running on [%s].' % device_choose, color='green'))
+                llprint("Building Computational Graph ... ")
+                llprint("Building DNC ... ")
 
-            if use_VGG:
-                vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
-                image_holder = tf.placeholder('float32', [1, 224, 224, 3])
-                vgg.build(image_holder)
+                # ncomputer = DNCDirectPostControl(
+                #     MemRNNController,
+                #     DirectPostController,
+                #     input_size,
+                #     output_size,
+                #     sequence_max_length,
+                #     words_count,
+                #     word_size,
+                #     read_heads,
+                #     batch_size,
+                #     testing=True
+                # )
+                ncomputer = DNC(
+                    L2RecurrentController,
+                    input_size,
+                    output_size,
+                    sequence_max_length,
+                    words_count,
+                    word_size,
+                    read_heads,
+                    batch_size,
+                    testing=True
+                )
 
-            # summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
-            summaries = []
+                if use_VGG:
+                    vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
+                    image_holder = tf.placeholder('float32', [1, 224, 224, 3])
+                    vgg.build(image_holder)
 
-            output, memory_view = ncomputer.get_outputs()
-            memory_states = ncomputer.get_memoory_states()
+                # summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
+                summaries = []
 
-            if not use_w2v:
-                softmax_output = tf.nn.softmax(output)
-            else:
-                softmax_output = output
+                output, memory_view = ncomputer.get_outputs()
+                memory_states = ncomputer.get_memoory_states()
 
-            llprint("Done!")
+                if not use_w2v:
+                    softmax_output = tf.nn.softmax(output)
+                else:
+                    softmax_output = output
 
-            llprint("Initializing Variables ... ")
-            session.run(tf.global_variables_initializer())
-            llprint("Done!")
-
-            if from_checkpoint is not None:
-                llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
-                ncomputer.restore(session, ckpts_dir, from_checkpoint)
                 llprint("Done!")
 
-            if not use_VGG:
-                model = Extractor()
-
-            last_100_losses = []
-
-            start_time_100 = time.time()
-            end_time_100 = None
-            avg_100_time = 0.
-            avg_counter = 0
-
-            samples = np.random.choice(data[:30000], 5)
-            # samples = data[1689:1695]
-
-            videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
-            vid_targets = [f['Description'] for f in samples]
-            if is_memview:
-                videos = ['Ugb_uH72d0I_8_17.avi']
-                # videos = ['eZLxohGP4IE_15_25.avi']
-
-            for test_file, target in zip(videos, vid_targets):
-                try:
-                    try:
-                        video_input = load_video(video_dir + test_file, use_VGG=use_VGG)
-                        print(colored('frame count: ', color='yellow'), len(video_input))
-                        seq_len = len(video_input) + output_len
-                        input_len = len(video_input)
-                    except:
-                        print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % test_file)
-                        continue
-                        # sys.exit(0)
-
-                    print('Getting VGG features...')
-
-                    input_data = []
-
-                    for frame in video_input:
-                        if use_VGG:
-                            fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
-                            input_data.append(np.reshape(fc6, [-1]))
-                        else:
-                            # print(frame)
-                            feat = model.extract_PIL(Image.fromarray(frame))
-                            input_data.append(np.reshape(feat, [-1]))
-
-                    for j in range(seq_len - len(input_data)):  # padding
-                        input_data.append(np.zeros([input_size], dtype=np.float32))
-                    input_data = np.array([input_data])
-
-                    print('seqlen: ', seq_len)
-                    print('Feed features into DNC.')
-
-                    step_output, mem_tuple, mem_matrix = session.run([
-                        softmax_output,
-                        memory_view,
-                        memory_states,
-                    ], feed_dict={
-                        ncomputer.input_data: input_data,
-                        ncomputer.sequence_length: seq_len,
-                    })
-
-                    word_map = ['' for i in range(len(lexicon_dict) + 1)]
-                    for word in lexicon_dict.keys():
-                        ind = lexicon_dict[word]
-                        word_map[ind] = word
-
-                    sentence_output = ''
-                    last_word = ''
-
-                    sentence_indexs = []
-                    top5_outputs = []
-
-                    step_output = step_output[0]  # shape (1, n+30, 21866)
-                    N = step_output.shape[0]
-
-                    sentence_5 = [[''] for i in range(5)]
-
-                    for word in [step_output[i, :] for i in range(N)]:
-                        if use_w2v:
-                            distances, index = tree.query(word, k=5)
-                            top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
-                        else:
-                            index = np.argmax(word)
-                            v = word.max()
-                            _sorted = word.argsort()[-5:].tolist()
-                            _sorted.reverse()
-
-                            top5 = [(word_map[ID], word[ID]) for ID in _sorted]
-                            top5_outputs.append(top5)
-
-                    counter = 0
-
-                    for t5 in top5_outputs:
-                        for w, s in zip(t5, sentence_5):
-                            if counter == input_len:
-                                s.append('[*]')
-                            if s[-1] != w[0]:
-                                s.append(w[0])
-                        counter += 1
-
-                    print(colored('Target: ', color='cyan',), target)
-
-                    for sent in sentence_5[:3]:
-                        out = ''
-                        for w in sent:
-                            out += w + ' '
-                        print(colored('DCN: ', color='green'), out)
-
-                    # print(colored('DCN: ', color='green'), sentence_output)
-                    # print(sentence_indexs)
-                    # print(top5_outputs)
-                    print('')
-                    if is_memview:
-                        np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
-                        np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
-                        np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
-
-                except KeyboardInterrupt:
-
+                if from_checkpoint is not None:
+                    llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
+                    ncomputer.restore(session, ckpts_dir, from_checkpoint)
                     llprint("Done!")
-                    sys.exit(0)
+                else:
+                    llprint("Initializing Variables ... ")
+                    session.run(tf.global_variables_initializer())
+                    llprint("Done!")
+
+                if not use_VGG:
+                    llprint("Loading InceptionV3")
+                    model = Extractor()
+
+                last_100_losses = []
+
+                start_time_100 = time.time()
+                end_time_100 = None
+                avg_100_time = 0.
+                avg_counter = 0
+
+                samples = np.random.choice(data[:30000], 5)
+                # samples = data[1689:1695]
+
+                videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
+                vid_targets = [f['Description'] for f in samples]
+                if is_memview:
+                    videos = ['Ugb_uH72d0I_8_17.avi']
+                    # videos = ['eZLxohGP4IE_15_25.avi']
+
+                weight_tFvars = []
+                for var in tf.trainable_variables():
+                    if "weight" in var.name:
+                        weight_tFvars.append(var)
+
+                for test_file, target in zip(videos, vid_targets):
+                    try:
+                        try:
+                            video_input = load_video(video_dir + test_file, use_VGG=use_VGG)
+                            print(colored('frame count: ', color='yellow'), len(video_input))
+                            seq_len = len(video_input) + output_len
+                            input_len = len(video_input)
+                        except:
+                            print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % test_file)
+                            continue
+                            # sys.exit(0)
+
+                        print('Getting VGG features...')
+
+                        input_data = []
+
+                        for frame in video_input:
+                            if use_VGG:
+                                fc6 = session.run([vgg.fc6], feed_dict={image_holder: frame})
+                                input_data.append(np.reshape(fc6, [-1]))
+                            else:
+                                # print(frame)
+                                feat = model.extract_PIL(Image.fromarray(frame))
+                                input_data.append(np.reshape(feat, [-1]))
+
+                        input_data = np.array(input_data)
+                        if concat_inp:
+                            input_data = inputConcat(input_data)
+
+                        input_data = np.concatenate([input_data, np.zeros([seq_len - len(input_data), input_data.shape[1]])], axis=0)
+                        input_data = np.array([input_data])
+
+                        print('seqlen: ', seq_len)
+                        print('Feed features into DNC.')
+
+                        step_output, mem_tuple, mem_matrix = session.run([
+                            softmax_output,
+                            memory_view,
+                            memory_states,
+                        ], feed_dict={
+                            ncomputer.input_data: input_data,
+                            ncomputer.sequence_length: seq_len,
+                        })
+
+                        word_map = ['' for i in range(len(lexicon_dict) + 1)]
+                        for word in lexicon_dict.keys():
+                            ind = lexicon_dict[word]
+                            word_map[ind] = word
+
+                        sentence_output = ''
+                        last_word = ''
+
+                        sentence_indexs = []
+                        top5_outputs = []
+
+                        step_output = step_output[0]  # shape (1, n+30, 21866)
+                        N = step_output.shape[0]
+
+                        sentence_5 = [[''] for i in range(5)]
+
+                        for word in [step_output[i, :] for i in range(N)]:
+                            if use_w2v:
+                                distances, index = tree.query(word, k=5)
+                                top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
+                            else:
+                                index = np.argmax(word)
+                                v = word.max()
+                                _sorted = word.argsort()[-5:].tolist()
+                                _sorted.reverse()
+
+                                top5 = [(word_map[ID], word[ID]) for ID in _sorted]
+                                top5_outputs.append(top5)
+
+                        counter = 0
+
+                        for t5 in top5_outputs:
+                            for w, s in zip(t5, sentence_5):
+                                if counter == input_len:
+                                    s.append('[*]')
+                                if s[-1] != w[0]:
+                                    s.append(w[0])
+                            counter += 1
+
+                        print(colored('Target: ', color='cyan',), target)
+
+                        for sent in sentence_5[:3]:
+                            out = ''
+                            for w in sent:
+                                w = colored(w, color='green') if w in target else w
+                                out += w + ' '
+                            print(colored('DCN: ', color='green'), out)
+
+                        # print(colored('DCN: ', color='green'), sentence_output)
+                        # print(sentence_indexs)
+                        # print(top5_outputs)
+                        print('')
+                        if is_memview:
+                            # weights = []
+                            # for var in weight_tFvars:
+                            #     weights.append(session.run(var))
+                            weights = session.run(weight_tFvars)
+                            weights = {var.name: tensor for var, tensor in zip(weight_tFvars, weights)}
+
+                            np.save(test_file[:-4] + '_weights_%s.npy' % from_checkpoint, weights)
+                            np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
+                            np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
+                            # np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
+
+                    except KeyboardInterrupt:
+
+                        llprint("Done!")
+                        sys.exit(0)

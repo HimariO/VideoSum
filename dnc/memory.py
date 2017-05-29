@@ -98,7 +98,7 @@ class Memory:
         free_gates = tf.expand_dims(free_gates, 1)
 
         retention_vector = tf.reduce_prod(1 - read_weightings * free_gates, 2)
-        updated_usage = (usage_vector + write_weighting - usage_vector * write_weighting)  * retention_vector
+        updated_usage = (usage_vector + write_weighting - usage_vector * write_weighting) * retention_vector
 
         return updated_usage
 
@@ -314,7 +314,7 @@ class Memory:
 
 
     def write(self, memory_matrix, usage_vector, read_weightings, write_weighting,
-              precedence_vector, link_matrix,  key, strength, free_gates,
+              precedence_vector, link_matrix, key, strength, free_gates,
               allocation_gate, write_gate, write_vector, erase_vector):
         """
         defines the complete pipeline of writing to memory gievn the write variables
@@ -335,6 +335,7 @@ class Memory:
             the precedence vector from the last time step
         link_matrix: Tensor (batch_size, words_num, words_num)
             the link_matrix from previous step
+
         key: Tensor (batch_size, word_size, 1)
             the key to query the memory location with
         strength: (batch_size, 1)
@@ -403,3 +404,93 @@ class Memory:
         new_read_vectors = self.update_read_vectors(memory_matrix, new_read_weightings)
 
         return new_read_weightings, new_read_vectors
+
+
+class SharpMemory(Memory):
+    def get_lookup_weighting(self, memory_matrix, keys, strengths):
+        """
+        retrives a content-based adderssing weighting given the keys
+
+        Parameters:
+        ----------
+        memory_matrix: Tensor (batch_size, words_num, word_size)
+            the memory matrix to lookup in
+        keys: Tensor (batch_size, word_size, number_of_keys)
+            the keys to query the memory with
+        strengths: Tensor (batch_size, number_of_keys, )
+            the list of strengths for each lookup key
+
+        Returns: Tensor (batch_size, words_num, number_of_keys)
+            The list of lookup weightings for each provided key
+        """
+
+        normalized_memory = tf.nn.l2_normalize(memory_matrix, 2)
+        normalized_keys = tf.nn.l2_normalize(keys, 1)
+
+        similiarity = tf.matmul(normalized_memory, normalized_keys)
+        strengths = tf.expand_dims(strengths, 1)
+        weight = similiarity * strengths
+        # weight = tf.multiply(weight, weight)
+        weight = tf.nn.softmax(weight, 1)
+        max_v = 1 - tf.reduce_max(weight)
+        max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(weight)))
+        weight = tf.add(weight, max_v_mtx)
+
+        return weight
+
+    # def update_read_weightings(self, lookup_weightings, forward_weighting, backward_weighting, read_mode):
+    #     """
+    #     updates and returns the current read_weightings
+    #
+    #     Parameters:
+    #     ----------
+    #     lookup_weightings: Tensor (batch_size, words_num, read_heads)
+    #         the content-based read weighting
+    #     forward_weighting: Tensor (batch_size, words_num, read_heads)
+    #         the forward direction read weighting
+    #     backward_weighting: Tensor (batch_size, words_num, read_heads)
+    #         the backward direction read weighting
+    #     read_mode: Tesnor (batch_size, 3, read_heads)
+    #         the softmax distribution between the three read modes
+    #
+    #     Returns: Tensor (batch_size, words_num, read_heads)
+    #     """
+    #
+    #     backward_mode = tf.expand_dims(read_mode[:, 0, :], 1) * backward_weighting
+    #     lookup_mode = tf.expand_dims(read_mode[:, 1, :], 1) * lookup_weightings
+    #     forward_mode = tf.expand_dims(read_mode[:, 2, :], 1) * forward_weighting
+    #     updated_read_weightings = backward_mode + lookup_mode + forward_mode
+    #     max_v = 1 - tf.reduce_max(updated_read_weightings)
+    #     max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(updated_read_weightings)))
+    #     updated_read_weightings = tf.add(updated_read_weightings, max_v_mtx)
+    #
+    #     return updated_read_weightings
+    #
+    # def update_write_weighting(self, lookup_weighting, allocation_weighting, write_gate, allocation_gate):
+    #     """
+    #     updates and returns the current write_weighting
+    #
+    #     Parameters:
+    #     ----------
+    #     lookup_weighting: Tensor (batch_size, words_num, 1)
+    #         the weight of the lookup operation in writing
+    #     allocation_weighting: Tensor (batch_size, words_num)
+    #         the weight of the allocation operation in writing
+    #     write_gate: (batch_size, 1)
+    #         the fraction of writing to be done
+    #     allocation_gate: (batch_size, 1)
+    #         the fraction of allocation to be done
+    #
+    #     Returns: Tensor (batch_size, words_num)
+    #         the updated write_weighting
+    #     """
+    #
+    #     # remove the dimension of 1 from the lookup_weighting
+    #     lookup_weighting = tf.squeeze(lookup_weighting)
+    #
+    #     updated_write_weighting = write_gate * (allocation_gate * allocation_weighting + (1 - allocation_gate) * lookup_weighting)
+    #     max_v = 1 - tf.reduce_max(updated_write_weighting)
+    #     max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(updated_write_weighting)))
+    #     updated_write_weighting = tf.add(updated_write_weighting, max_v_mtx)
+    #
+    #     return updated_write_weighting

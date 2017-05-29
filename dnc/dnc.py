@@ -1,6 +1,6 @@
 import tensorflow as tf
-from tensorflow.python.ops.rnn_cell import LSTMStateTuple
-from .memory import Memory
+from tensorflow.contrib.rnn import LSTMStateTuple
+from .memory import *
 from .utility import *
 import os
 
@@ -42,7 +42,7 @@ class DNC:
         self.read_heads = memory_read_heads
         self.batch_size = batch_size
 
-        self.memory = Memory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
         self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
 
         # input data placeholders
@@ -50,6 +50,7 @@ class DNC:
         self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
         self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
 
+        self.penalty_term = None
         self.build_graph()
 
     def _step_op(self, step, memory_state, controller_state=None):
@@ -267,6 +268,13 @@ class DNC:
         return self.packed_output, self.packed_memory_view
 
     def get_memoory_states(self):
+        """
+        returns 'memory_matrix','usage_vector','precedence_vector','link_matrix',
+        'write_weighting','read_weightings','read_vectors'
+
+        Returns: Tuple
+            packed_memory_matrixs: dict
+        """
         return self.packed_memory_matrixs
 
     def save(self, session, ckpts_dir, name):

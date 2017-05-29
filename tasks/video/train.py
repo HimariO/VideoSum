@@ -1,5 +1,6 @@
 import warnings
 import tensorflow as tf
+from tensorflow.python import debug as tf_debug
 import numpy as np
 import pickle
 import getopt
@@ -10,6 +11,7 @@ import csv
 import spacy
 import re
 import math
+import random
 
 from dnc.dnc import *
 from recurrent_controller import *
@@ -58,17 +60,17 @@ if __name__ == '__main__':
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 2048
+    input_size = 2048 * 2
     words_count = 256
     word_size = 1024
     read_heads = 2
 
-    learning_rate = 2e-4
+    learning_rate = 1e-4
     momentum = 0.9
 
     from_checkpoint = None
     iterations = len(data)
-    data_size = 40000
+    data_size = 50000
     start_step = 0
 
     last_sum = 1
@@ -81,6 +83,7 @@ if __name__ == '__main__':
     """
     If need to resume training from checkpoint, you must start form iteration which have same step with one of npy sample's start file.
     due to teh fact that sample in the middle of file have unknow ID(start + miss_data_num), after program restarting with 0 miss_data_num.
+    ༼ つ ◕_◕ ༽つ
     """
 
     for opt in options:
@@ -97,7 +100,6 @@ if __name__ == '__main__':
     graph = tf.Graph()
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
-
     with graph.as_default():
         with tf.Session(graph=graph, config=config) as session:
 
@@ -133,6 +135,7 @@ if __name__ == '__main__':
             )
 
             output, _ = ncomputer.get_outputs()
+            # memMat = ncomputer.get_memoory_states()
 
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
@@ -143,6 +146,7 @@ if __name__ == '__main__':
                 loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)) / tf.reduce_sum(loss_weights)
             else:
                 loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
+                flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
             # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
             summeries = []
@@ -177,11 +181,14 @@ if __name__ == '__main__':
                 ncomputer.restore(session, ckpts_dir, from_checkpoint)
                 llprint("Done!")
 
+            session = tf_debug.LocalCLIDebugWrapperSession(session)
+            session.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+
             last_100_losses = []
             last_avg_min_max = [0, 0, 0]
 
             start = 0 if start_step == 0 else start_step + 1
-            end = 900000
+            end = 1500000
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -196,8 +203,16 @@ if __name__ == '__main__':
             seq_reapte = 1
             seq_video_num = 1 if not single_repeat else 8
 
-            for i in range(start, end):
-                data_ID = int(i % data_size)
+            shuffle_range = [start] + [i for i in range(start + (200 - start % 200), end, 200)]
+            shuffle_range = shuffle_range + [end]
+            _shuffle_range = []
+            for ind in range(len(shuffle_range) - 1):
+                orders = list(range(shuffle_range[ind], shuffle_range[ind + 1]))
+                random.shuffle(orders)
+                _shuffle_range += orders
+
+            for i, d in zip(range(start, end), _shuffle_range):
+                data_ID = int(d % data_size)
 
                 if current_feat is None or current_feat[1] > data_ID or current_feat[2] < data_ID:
                     for f in feat_files_tup:
@@ -233,7 +248,7 @@ if __name__ == '__main__':
 
                     try:
                         if batch_size == 1:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, concat_input=True)
                         else:
                             input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
 

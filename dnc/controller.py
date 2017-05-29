@@ -41,12 +41,11 @@ class BaseController:
         self.interface_vector_size = self.word_size * self.read_heads + 3 * self.word_size + 5 * self.read_heads + 3
 
         # define network vars
-        with tf.name_scope("controller"):
+        with tf.variable_scope("controller"):
             self.network_vars()
 
             self.nn_output_size = None
-            with tf.variable_scope("shape_inference"):
-                self.nn_output_size = self.get_nn_output_size()
+            self.nn_output_size = self.get_nn_output_size()
 
             self.initials()
 
@@ -101,11 +100,11 @@ class BaseController:
         Raises: ValueError
         """
 
-        input_vector =  np.zeros([self.batch_size, self.nn_input_size], dtype=np.float32)
+        input_vector = np.zeros([self.batch_size, self.nn_input_size], dtype=np.float32)
         output_vector = None
 
         if self.has_recurrent_nn:
-            output_vector,_ = self.network_op(input_vector, self.get_state())
+            output_vector, _ = self.network_op(input_vector, self.get_state())
         else:
             output_vector = self.network_op(input_vector)
 
@@ -227,3 +226,14 @@ class BaseController:
         final_output = pre_output + tf.matmul(flat_read_vectors, self.mem_output_weights)
 
         return final_output
+
+    def final_output_delta(self, pre_output, new_read_vectors):
+        """
+        return abs(mem_out - pre_out)
+        penatly term for output balance between nn_out and mem_out.
+        """
+        flat_read_vectors = tf.reshape(new_read_vectors, (-1, self.word_size * self.read_heads))
+
+        mem_output = tf.matmul(flat_read_vectors, self.mem_output_weights)
+        delta = tf.abs(mem_output - pre_output)
+        return delta

@@ -53,8 +53,9 @@ ani2 = animation.ArtistAnimation(fig, ims, interval=75, blit=False, repeat_delay
 # plt.show()
 
 
+pos = [1, 2, 3, 4]
 for i in range(read_vecs.shape[-1]):
-    a = fig2.add_subplot(2, 2, i + 1)
+    a = fig2.add_subplot(2, 2, pos[i])
     imgplot = plt.imshow(read_vecs[:, :, i])
     # imgplot.set_clim(0.0, 0.7)
     a.set_title('readhead[%d] read vector(values)' % i)
