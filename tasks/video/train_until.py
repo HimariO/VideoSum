@@ -101,7 +101,14 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         input_vec = np.concatenate([input_vec, prev_input], axis=1)
 
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
-    output_str = [dictionary[i] for i in output_str]
+    dictionary_k = dictionary.keys()
+    temp = []
+    for word in output_str:
+        try:
+            temp.append(dictionary[word])
+        except:
+            temp.append(2)  # <UNKNOW>
+    output_str = temp
 
     if extend_target:
         temp = []
@@ -150,6 +157,12 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     output input-output pair with overlay timestep.
     input_vector = [D, D, D, D, D, 0, 0, 0, 0]
     output_vector= [0, 0, 0, D, D, D, D, D, D]
+
+    return:
+    input_data (batch_size, seq_len, input_size)
+    target_output (batch_size, seq_len, output_size)
+    seq_len (1) = input_len + output_len - over_lap
+    mask ()
     """
 
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
@@ -176,7 +189,15 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
         input_vec = np.concatenate([input_vec, prev_input], axis=1)
 
     output_str = [str(i) for i in nlp(annotation['Description'][:-5])] + [EOS]
-    output_str = [dictionary[i] for i in output_str]
+    dictionary_k = dictionary.keys()
+    temp = []
+    for word in output_str:
+        try:
+            temp.append(dictionary[word])
+        except:
+            temp.append(2)  # <UNKNOW>
+    output_str = temp
+
     if extend_target:
         temp = []
         for s in output_str:
@@ -224,8 +245,8 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     )
 
 
-def prepare_batch(annotations, dictionary, video_features, redu_sample_rate=1,
-                  word_emb=None, extend_target=False, setMask=True):
+def prepare_batch(annotations, dictionary, video_features, epoch, redu_sample_rate=1,
+                  word_emb=None, extend_target=False, setMask=True, useMix=False, accuTrain=False):
     """
     Put batch of label and features into a single nparray.
     annotations: list of annotations with size of 'batch_size'
@@ -256,7 +277,14 @@ def prepare_batch(annotations, dictionary, video_features, redu_sample_rate=1,
 
     for video_feature, annotation in zip(video_features, annotations):
         try:
-            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+            if useMix:
+                input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+            else:
+                input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+
+            if accuTrain:
+                input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, epoch)
+
         except OSError:
             input_data_ = np.zeros([1, 2, 2048])
             target_outputs_ = np.zeros([1, 2, word_space_size])
@@ -267,29 +295,47 @@ def prepare_batch(annotations, dictionary, video_features, redu_sample_rate=1,
 
     max_in = max(none_padded, key=lambda x: x[2]['input_len'])[2]['input_len']
     max_out = max(none_padded, key=lambda x: x[2]['output_len'])[2]['output_len']
+
+    max_out_step = list(map(lambda x: x[2]['seq_len'] - x[2]['output_len'], none_padded))
+    max_out_step = max(max_out_step)
     seq_len = max_seq = max_in + max_out
 
     for data in none_padded:
         input_data_, target_outputs_, seq_len_, mask_ = data[0], data[1], data[2], data[3]
 
-        left_pad = max_in - seq_len_['input_len']
-        right_pad = max_out - seq_len_['output_len']
+        if useMix:
+            out_step = seq_len_['seq_len'] - seq_len_['output_len']
+            left_pad = max_out_step - out_step
+            # if seq_len_['output_len'] > 5:
+            right_pad = max_out - seq_len_['output_len']
+
+        else:
+            left_pad = max_in - seq_len_['input_len']
+            right_pad = max_out - seq_len_['output_len']
 
         input_data_ = np.concatenate([np.zeros([1, left_pad, 2048]), input_data_, np.zeros([1, right_pad, 2048])], axis=1)
         target_outputs_ = np.concatenate([np.zeros([1, left_pad, word_space_size]), target_outputs_, np.zeros([1, right_pad, word_space_size])], axis=1)
+
         mask_ = np.concatenate(
             [
-                np.zeros([1, max_in - seq_len_['input_len'], 1]),
+                np.zeros([1, left_pad, 1]),
                 mask_,
-                np.zeros([1, max_out - seq_len_['output_len'], 1]),
+                np.zeros([1, right_pad, 1]),
             ],
             axis=1
         )
+        # print(colored('mask_: ', color='yellow'), mask_.shape, ' ', left_pad, ' ', right_pad)
+        # print(colored('input_vec: ', color='yellow'), input_data_.shape)
+        # print(colored('output_vec: ', color='yellow'), target_outputs_.shape)
 
         input_data = np.concatenate([input_data, input_data_], axis=0) if input_data is not None else input_data_
         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=0) if target_outputs is not None else target_outputs_
         mask = np.concatenate([mask, mask_], axis=0) if mask is not None else mask_
 
+    if useMix:
+        seq_len = input_data.shape[1]
+    # np.save("debug.npy", {'in': input_data, 'out': target_outputs})
+    # input("stop here.")
     return (
         input_data,
         target_outputs,
@@ -306,3 +352,31 @@ def inputConcat(input_vec):
     input_vec = np.concatenate([input_vec, prev_input], axis=1)
     print(input_vec.shape)
     return input_vec
+
+
+def accuTraining(input_data_, target_outputs_, mesk_, seq_len_, epoch):
+    """
+    Set target length according to traing epoch,
+    target len will increase along with epoch.
+
+    target_outputs_: np.array
+    seq_len_: dict
+    epoch: int
+
+    return:
+    target_outputs_: np.array
+    """
+
+    target_steps = seq_len_['output_len']
+    min_out_len = min([target_steps, 2])
+    new_len = min([min_out_len + epoch, target_steps])
+    delta = abs(target_steps - new_len)
+
+    target_outputs_ = target_outputs_[:, :seq_len_['seq_len'] - delta, :]
+    input_data_ = input_data_[:, :seq_len_['seq_len'] - delta, :]
+    mesk_ = mesk_[:, :seq_len_['seq_len'] - delta, :]
+
+    seq_len_['output_len'] = seq_len_['output_len'] - delta
+    seq_len_['seq_len'] = seq_len_['seq_len'] - delta
+
+    return input_data_, target_outputs_, seq_len_, mesk_

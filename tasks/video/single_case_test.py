@@ -41,7 +41,7 @@ if __name__ == '__main__':
     is_memview = False
     use_w2v = False
     use_VGG = False
-    concat_inp = True
+    concat_inp = False
     device_choose = '/gpu:0'
 
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'debug=', 'memory_view=', 'word2vec=', 'device='])
@@ -71,14 +71,14 @@ if __name__ == '__main__':
     data, lexicon_dict = load(anno_file, dict_file)
     llprint("Done!\n")
 
-    batch_size = 1
-    input_size = 2048 * 2  # 100352
+    batch_size = 4
+    input_size = 2048  # 100352
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
     words_count = 256
-    word_size = 1024
-    read_heads = 2
+    word_size = 512
+    read_heads = 4
 
     graph = tf.Graph()
     config = tf.ConfigProto(allow_soft_placement=True)
@@ -96,18 +96,6 @@ if __name__ == '__main__':
                 llprint("Building Computational Graph ... ")
                 llprint("Building DNC ... ")
 
-                # ncomputer = DNCDirectPostControl(
-                #     MemRNNController,
-                #     DirectPostController,
-                #     input_size,
-                #     output_size,
-                #     sequence_max_length,
-                #     words_count,
-                #     word_size,
-                #     read_heads,
-                #     batch_size,
-                #     testing=True
-                # )
                 ncomputer = DNC(
                     L2RecurrentController,
                     input_size,
@@ -119,6 +107,18 @@ if __name__ == '__main__':
                     batch_size,
                     testing=True
                 )
+                # ncomputer = DNCDuo(
+                #     MemRNNController,
+                #     DirectPostController,
+                #     input_size,
+                #     output_size,
+                #     sequence_max_length,
+                #     words_count,
+                #     word_size,
+                #     read_heads,
+                #     batch_size,
+                #     testing=True
+                # )
 
                 if use_VGG:
                     vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
@@ -202,7 +202,10 @@ if __name__ == '__main__':
                             input_data = inputConcat(input_data)
 
                         input_data = np.concatenate([input_data, np.zeros([seq_len - len(input_data), input_data.shape[1]])], axis=0)
-                        input_data = np.array([input_data])
+                        input_data = np.array([input_data])  # add batch dimansion
+
+                        if batch_size > 1:
+                            input_data = np.concatenate([input_data for i in range(batch_size)], axis=0)
 
                         print('seqlen: ', seq_len)
                         print('Feed features into DNC.')
@@ -275,10 +278,10 @@ if __name__ == '__main__':
                             weights = session.run(weight_tFvars)
                             weights = {var.name: tensor for var, tensor in zip(weight_tFvars, weights)}
 
-                            np.save(test_file[:-4] + '_weights_%s.npy' % from_checkpoint, weights)
+                            # np.save(test_file[:-4] + '_weights_%s.npy' % from_checkpoint, weights)
                             np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
                             np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
-                            # np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
+                            np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
 
                     except KeyboardInterrupt:
 

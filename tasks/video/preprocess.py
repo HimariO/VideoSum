@@ -123,6 +123,7 @@ def encode_data(files_list, lexicons_dictionary, length_limit=None):
 def process_csv(path):
     data = []
     dictionary = {'<EOS>': 1}
+    word_count = {'<EOS>': 99}
     nlp = spacy.load('en')
 
     with open(path, newline='') as csvfile:
@@ -133,8 +134,10 @@ def process_csv(path):
                 for i in nlp(row['Description']):
                     try:
                         dictionary[str(i)] += 0
+                        word_count[str(i)] += 1
                     except:
                         dictionary[str(i)] = len(dictionary) + 1
+                        word_count[str(i)] = 1
                 row['Description'] += ' <EOS>'
                 data.append(row)
     random.shuffle(data)
@@ -159,8 +162,12 @@ def process_csv(path):
         writer = csv.DictWriter(dict_file, ['word', 'id'])
         writer.writeheader()
 
+        ID_curr = 3
         for key in dictionary.keys():
-            writer.writerow({'word': key, 'id': dictionary[key]})
+            if word_count[key] > 2:
+                writer.writerow({'word': key, 'id': ID_curr})
+                ID_curr += 1
+        writer.writerow({'word': "<UNKNOW>", 'id': 2})
     return
 
 if __name__ == '__main__':

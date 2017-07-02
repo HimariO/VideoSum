@@ -45,7 +45,7 @@ class PostController:
 
 class DirectPostController:
 
-    def __init__(self, input_size, output_size, batch_size=1, cell_num=512, layer=1):
+    def __init__(self, input_size, output_size, batch_size=1, cell_num=512, layer=2):
         """
         DirectPostController will getting [(memory readvector+controller pre-output), videofeature] as input.
         input size [word_size * readhead + batch_size * dnc_output_size, 1]
@@ -65,10 +65,11 @@ class DirectPostController:
         self.final_lstm = tf.contrib.rnn.DropoutWrapper(self.final_lstm, output_keep_prob=0.5)
 
         if self.layer > 1:
-            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * (self.layer - 1) + [self.final_lstm])
+            self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell for _ in range(self.layer - 1)] + [self.final_lstm])
         else:
             self.stack_lstm = self.final_lstm
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+        self.stack_lstm = tf.make_template('LSTMCell', self.stack_lstm)
 
         # self.output_weights = tf.Variable(
         #     tf.random_normal([self.cell_num, self.output_size], stddev=0.1),

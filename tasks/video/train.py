@@ -55,15 +55,16 @@ if __name__ == '__main__':
         data, lexicon_dict = load(anno_file, w2v_dict_file)
         output_size = w2v_emb.shape[1]
         word_space_size = w2v_emb.shape[1]
+
     sequence_max_length = 500
 
     llprint("Done!\n")
 
     batch_size = 1
-    input_size = 2048 * 2
+    input_size = 2048
     words_count = 256
-    word_size = 1024
-    read_heads = 2
+    word_size = 512
+    read_heads = 4
 
     learning_rate = 1e-4
     momentum = 0.9
@@ -98,8 +99,9 @@ if __name__ == '__main__':
             single_repeat = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
-    config = tf.ConfigProto()
+    config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
+
     with graph.as_default():
         with tf.Session(graph=graph, config=config) as session:
 
@@ -108,21 +110,10 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
-            # optimizer = tf.train.AdamOptimizer(learning_rate)
-            summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
+            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
+            summerizer = tf.summary.FileWriter(tb_logs_dir, graph)
 
-            # ncomputer = DNCDirectPostControl(
-            #     MemRNNController,
-            #     DirectPostController,
-            #     input_size,
-            #     output_size,
-            #     sequence_max_length,
-            #     words_count,
-            #     word_size,
-            #     read_heads,
-            #     batch_size
-            # )
             ncomputer = DNC(
                 L2RecurrentController,
                 input_size,
@@ -133,8 +124,20 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
+            # ncomputer = DNCDuo(
+            #     MemRNNController,
+            #     DirectPostController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
 
             output, _ = ncomputer.get_outputs()
+            softmax_output = tf.nn.softmax(output)
             # memMat = ncomputer.get_memoory_states()
 
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
@@ -147,14 +150,13 @@ if __name__ == '__main__':
             else:
                 loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
                 flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
-            # loss = loss / tf.cast(ncomputer.sequence_length, tf.float32)
 
             summeries = []
 
             gradients = optimizer.compute_gradients(loss)
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
-                    gradients[i] = (tf.clip_by_value(grad, -10, 10), var)
+                    gradients[i] = (tf.clip_by_value(grad, -1, 1), var)
             for (grad, var) in gradients:
                 if grad is not None:
                     summeries.append(tf.summary.histogram(var.name + '/grad', grad))
@@ -181,8 +183,8 @@ if __name__ == '__main__':
                 ncomputer.restore(session, ckpts_dir, from_checkpoint)
                 llprint("Done!")
 
-            session = tf_debug.LocalCLIDebugWrapperSession(session)
-            session.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+            # session = tf_debug.LocalCLIDebugWrapperSession(session)
+            # session.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
 
             last_100_losses = []
             last_avg_min_max = [0, 0, 0]
@@ -206,6 +208,7 @@ if __name__ == '__main__':
             shuffle_range = [start] + [i for i in range(start + (200 - start % 200), end, 200)]
             shuffle_range = shuffle_range + [end]
             _shuffle_range = []
+
             for ind in range(len(shuffle_range) - 1):
                 orders = list(range(shuffle_range[ind], shuffle_range[ind + 1]))
                 random.shuffle(orders)
@@ -223,13 +226,14 @@ if __name__ == '__main__':
                         else:
                             current_feat = (None, -1, -1)
 
-                    if current_feat == (None, -1, -1):  # if no data are aliviable.
-                        print('Cant find suitable data for tarining.')
+                    if current_feat[1:] == (-1, -1) and current_feat[0] is None:  # if no data are aliviable.
+                        print('Can\'t find suitable data for tarining.')
                         sys.exit(0)
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
                         reuse_data_param = math.ceil(i / data_size / 2)
                         seq_video_num = 1 + ((reuse_data_param - 1) * 1) % 1
+
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
 
@@ -248,23 +252,27 @@ if __name__ == '__main__':
 
                     try:
                         if batch_size == 1:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, concat_input=True)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, concat_input=False)
+                            # input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, i // data_size)
                         else:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=2, word_emb=w2v_emb, useMix=True, accuTrain=True)
 
                         input_data = np.concatenate([input_data, input_data_], axis=1) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
                         seq_len = seq_len + seq_len_['seq_len'] if seq_len is not None else seq_len_['seq_len']
                         mask = np.concatenate([mask, mask_], axis=1) if mask is not None else mask_
+
                         included_vid += 1
 
                         if included_vid < seq_video_num:
                             continue
                         else:
                             included_vid = 0
+
                     except OSError:
                         print(colored('Error: ', color='red'), 'video %s doesn\'t exist.' % sample['VideoID'])
                         continue
+
                     except KeyError:
                         print(colored('Error: ', color='red'), 'Annotation %s containing some word not exist in dictionary!' % sample['VideoID'])
                         continue
@@ -278,8 +286,9 @@ if __name__ == '__main__':
                     first_loss = None
                     n = 0
                     while True:
-                        loss_value, _, summary = session.run([
+                        loss_value, out_value, _, summary = session.run([
                             loss,
+                            softmax_output,
                             apply_gradients,
                             summerize_op if summerize else no_summerize,
                         ], feed_dict={
@@ -288,6 +297,10 @@ if __name__ == '__main__':
                             ncomputer.sequence_length: seq_len,
                             loss_weights: mask
                         })
+
+                        # if loss_value == 0:
+                        #     np.save('debug_target.npy', {'tar': target_outputs, 'out': out_value})
+                        #     sys.exit(0)
 
                         print(colored('[%d]loss: ' % n, color='green'), loss_value)
                         n += 1

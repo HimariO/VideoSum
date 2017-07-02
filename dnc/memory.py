@@ -430,67 +430,87 @@ class SharpMemory(Memory):
         similiarity = tf.matmul(normalized_memory, normalized_keys)
         strengths = tf.expand_dims(strengths, 1)
         weight = similiarity * strengths
-        # weight = tf.multiply(weight, weight)
+        weight = tf.multiply(weight, weight)
         weight = tf.nn.softmax(weight, 1)
-        max_v = 1 - tf.reduce_max(weight)
-        max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(weight)))
-        weight = tf.add(weight, max_v_mtx)
 
         return weight
 
-    # def update_read_weightings(self, lookup_weightings, forward_weighting, backward_weighting, read_mode):
-    #     """
-    #     updates and returns the current read_weightings
-    #
-    #     Parameters:
-    #     ----------
-    #     lookup_weightings: Tensor (batch_size, words_num, read_heads)
-    #         the content-based read weighting
-    #     forward_weighting: Tensor (batch_size, words_num, read_heads)
-    #         the forward direction read weighting
-    #     backward_weighting: Tensor (batch_size, words_num, read_heads)
-    #         the backward direction read weighting
-    #     read_mode: Tesnor (batch_size, 3, read_heads)
-    #         the softmax distribution between the three read modes
-    #
-    #     Returns: Tensor (batch_size, words_num, read_heads)
-    #     """
-    #
-    #     backward_mode = tf.expand_dims(read_mode[:, 0, :], 1) * backward_weighting
-    #     lookup_mode = tf.expand_dims(read_mode[:, 1, :], 1) * lookup_weightings
-    #     forward_mode = tf.expand_dims(read_mode[:, 2, :], 1) * forward_weighting
-    #     updated_read_weightings = backward_mode + lookup_mode + forward_mode
-    #     max_v = 1 - tf.reduce_max(updated_read_weightings)
-    #     max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(updated_read_weightings)))
-    #     updated_read_weightings = tf.add(updated_read_weightings, max_v_mtx)
-    #
-    #     return updated_read_weightings
-    #
-    # def update_write_weighting(self, lookup_weighting, allocation_weighting, write_gate, allocation_gate):
-    #     """
-    #     updates and returns the current write_weighting
-    #
-    #     Parameters:
-    #     ----------
-    #     lookup_weighting: Tensor (batch_size, words_num, 1)
-    #         the weight of the lookup operation in writing
-    #     allocation_weighting: Tensor (batch_size, words_num)
-    #         the weight of the allocation operation in writing
-    #     write_gate: (batch_size, 1)
-    #         the fraction of writing to be done
-    #     allocation_gate: (batch_size, 1)
-    #         the fraction of allocation to be done
-    #
-    #     Returns: Tensor (batch_size, words_num)
-    #         the updated write_weighting
-    #     """
-    #
-    #     # remove the dimension of 1 from the lookup_weighting
-    #     lookup_weighting = tf.squeeze(lookup_weighting)
-    #
-    #     updated_write_weighting = write_gate * (allocation_gate * allocation_weighting + (1 - allocation_gate) * lookup_weighting)
-    #     max_v = 1 - tf.reduce_max(updated_write_weighting)
-    #     max_v_mtx = tf.scalar_mul(max_v, tf.ones(shape=tf.shape(updated_write_weighting)))
-    #     updated_write_weighting = tf.add(updated_write_weighting, max_v_mtx)
-    #
-    #     return updated_write_weighting
+    def update_read_weightings(self, lookup_weightings, forward_weighting, backward_weighting, read_mode, usage_vector):
+        """
+        updates and returns the current read_weightings
+
+        Parameters:
+        ----------
+        lookup_weightings: Tensor (batch_size, words_num, read_heads)
+            the content-based read weighting
+        forward_weighting: Tensor (batch_size, words_num, read_heads)
+            the forward direction read weighting
+        backward_weighting: Tensor (batch_size, words_num, read_heads)
+            the backward direction read weighting
+        read_mode: Tesnor (batch_size, 3, read_heads)
+            the softmax distribution between the three read modes
+        usage_vector: Tensor (batch_size, words_num)
+
+        Returns: Tensor (batch_size, words_num, read_heads)
+        """
+
+        backward_mode = tf.expand_dims(read_mode[:, 0, :], 1) * backward_weighting
+        lookup_mode = tf.expand_dims(read_mode[:, 1, :], 1) * lookup_weightings
+        forward_mode = tf.expand_dims(read_mode[:, 2, :], 1) * forward_weighting
+        updated_read_weightings = backward_mode + lookup_mode + forward_mode
+
+        # expaned_usage = tf.stack([usage_vector for _ in range(self.read_heads)])
+        # expaned_usage = tf.reshape(expaned_usage, [self.batch_size, self.words_num, self.read_heads])
+        # updated_read_weightings = tf.multiply(updated_read_weightings, expaned_usage)
+        # updated_read_weightings = tf.nn.softmax(updated_read_weightings, dim=1)
+
+        return updated_read_weightings
+
+    def update_read_vectors(self, memory_matrix, read_weightings, usage_vector):
+        """
+        reads, updates, and returns the read vectors of the recently updated memory
+
+        Parameters:
+        ----------
+        memory_matrix: Tensor (batch_size, words_num, word_size)
+            the recently updated memory matrix
+        read_weightings: Tensor (batch_size, words_num, read_heads)
+            the amount of info to read from each memory location by each read head
+
+        Returns: Tensor (word_size, read_heads)
+        """
+
+        updated_read_vectors = tf.matmul(memory_matrix, read_weightings, adjoint_a=True)
+
+        return updated_read_vectors
+
+    def read(self, memory_matrix, read_weightings, keys, strengths, link_matrix, read_modes, usage_vector):
+        """
+        defines the complete pipeline for reading from memory
+
+        Parameters:
+        ----------
+        memory_matrix: Tensor (batch_size, words_num, word_size)
+            the updated memory matrix from the last writing
+        read_weightings: Tensor (batch_size, words_num, read_heads)
+            the read weightings form the last time step
+        keys: Tensor (batch_size, word_size, read_heads)
+            the kyes to query the memory locations with
+        strengths: Tensor (batch_size, read_heads)
+            the strength of each read key
+        link_matrix: Tensor (batch_size, words_num, words_num)
+            the updated link matrix from the last writing
+        read_modes: Tensor (batch_size, 3, read_heads)
+            the softmax distribution between the three read modes
+
+        Returns: Tuple
+            the updated read_weightings: Tensor(batch_size, words_num, read_heads)
+            the recently read vectors: Tensor (batch_size, word_size, read_heads)
+        """
+
+        lookup_weighting = self.get_lookup_weighting(memory_matrix, keys, strengths)
+        forward_weighting, backward_weighting = self.get_directional_weightings(read_weightings, link_matrix)
+        new_read_weightings = self.update_read_weightings(lookup_weighting, forward_weighting, backward_weighting, read_modes, usage_vector)
+        new_read_vectors = self.update_read_vectors(memory_matrix, new_read_weightings, usage_vector)
+
+        return new_read_weightings, new_read_vectors

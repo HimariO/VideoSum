@@ -42,7 +42,7 @@ class DNC:
         self.read_heads = memory_read_heads
         self.batch_size = batch_size
 
-        self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.memory = Memory(self.words_num, self.word_size, self.read_heads, self.batch_size)
         self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
 
         # input data placeholders
@@ -90,14 +90,25 @@ class DNC:
             interface['erase_vector']
         )
 
-        read_weightings, read_vectors = self.memory.read(
-            memory_matrix,
-            memory_state[5],
-            interface['read_keys'],
-            interface['read_strengths'],
-            link_matrix,
-            interface['read_modes'],
-        )
+        if type(self.memory) is SharpMemory:
+            read_weightings, read_vectors = self.memory.read(
+                memory_matrix,
+                memory_state[5],
+                interface['read_keys'],
+                interface['read_strengths'],
+                link_matrix,
+                interface['read_modes'],
+                memory_state[1],
+            )
+        else:
+            read_weightings, read_vectors = self.memory.read(
+                memory_matrix,
+                memory_state[5],
+                interface['read_keys'],
+                interface['read_strengths'],
+                link_matrix,
+                interface['read_modes'],
+            )
 
         return [
 
@@ -116,8 +127,7 @@ class DNC:
             interface['write_gate'],
 
             # report new state of RNN if exists
-            nn_state[0] if nn_state is not None else tf.zeros(1),
-            nn_state[1] if nn_state is not None else tf.zeros(1)
+            nn_state if nn_state is not None else tf.zeros(1),
         ]
 
 
@@ -151,7 +161,7 @@ class DNC:
         new_controller_state = tf.zeros(1)
         new_memory_state = tuple(output_list[0:7])
 
-        new_controller_state = LSTMStateTuple(output_list[11], output_list[12])
+        new_controller_state = output_list[11]
 
         outputs = outputs.write(time, output_list[7])
 
@@ -211,8 +221,9 @@ class DNC:
             tf.TensorArray(tf.float32, self.sequence_length),
         ]
 
-        if not isinstance(controller_state, LSTMStateTuple):
-            controller_state = LSTMStateTuple(controller_state[0], controller_state[1])
+        # This 2 line of code will cause problem if controller have more than 1 layer.
+        # if not isinstance(controller_state, LSTMStateTuple):
+        #     controller_state = LSTMStateTuple(controller_state[0], controller_state[1])
 
         final_results = None
 
@@ -588,6 +599,112 @@ class DNCDirectPostControl(DNCPostControl):
             step_input,
             post_controller_state
         )
+
+        return [
+
+            # report new memory state to be updated outside the condition branch
+            memory_matrix,
+            usage_vector,
+            precedence_vector,
+            link_matrix,
+            write_weighting,
+            read_weightings,
+            read_vectors,
+
+            final_out,
+            interface['free_gates'],
+            interface['allocation_gate'],
+            interface['write_gate'],
+
+            # report new state of RNN if exists
+            nn_state[0] if nn_state is not None else tf.zeros(1),
+            nn_state[1] if nn_state is not None else tf.zeros(1),
+            post_nn_state[0] if nn_state is not None else tf.zeros(1),
+            post_nn_state[1] if nn_state is not None else tf.zeros(1),
+        ]
+
+
+class DNCDuo(DNCPostControl):
+
+    def __init__(self, controller_class, parllel_controller_class, input_size, output_size, max_sequence_length,
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
+
+        with tf.device('/gpu:1'):
+            self.post_control = parllel_controller_class(
+                memory_word_size * memory_read_heads + batch_size * output_size,
+                output_size, batch_size
+            )
+
+        self.testing = testing
+
+        self.input_size = input_size
+        self.output_size = output_size
+        self.max_sequence_length = max_sequence_length
+        self.words_num = memory_words_num
+        self.word_size = memory_word_size
+        self.read_heads = memory_read_heads
+        self.batch_size = batch_size
+
+        self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
+
+        # input data placeholders
+        self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
+        self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
+
+        self.build_graph()
+
+    def _step_op(self, step, memory_state, controller_state=None, post_controller_state=None):
+
+        last_read_vectors = memory_state[6]
+        pre_output, interface, nn_state, post_nn_state = None, None, None, None
+
+        if self.controller.has_recurrent_nn:
+            pre_output, interface, nn_state = self.controller.process_input(step, last_read_vectors, controller_state)
+        else:
+            pre_output, interface = self.controller.process_input(step, last_read_vectors)
+
+        with tf.device('/gpu:1'):
+            d_pre_out, post_nn_state = self.post_control.network_op(
+                step,
+                tf.reshape(last_read_vectors, (-1, self.word_size * self.read_heads)),
+                post_controller_state
+            )
+
+        usage_vector, write_weighting, memory_matrix, link_matrix, precedence_vector = self.memory.write(
+            memory_state[0], memory_state[1], memory_state[5],
+            memory_state[4], memory_state[2], memory_state[3],
+            interface['write_key'],
+            interface['write_strength'],
+            interface['free_gates'],
+            interface['allocation_gate'],
+            interface['write_gate'],
+            interface['write_vector'],
+            interface['erase_vector']
+        )
+
+        if type(self.memory) is SharpMemory:
+            read_weightings, read_vectors = self.memory.read(
+                memory_matrix,
+                memory_state[5],
+                interface['read_keys'],
+                interface['read_strengths'],
+                link_matrix,
+                interface['read_modes'],
+                memory_state[1],
+            )
+        else:
+            read_weightings, read_vectors = self.memory.read(
+                memory_matrix,
+                memory_state[5],
+                interface['read_keys'],
+                interface['read_strengths'],
+                link_matrix,
+                interface['read_modes'],
+            )
+
+        final_out = self.controller.final_output(pre_output, read_vectors) + d_pre_out
 
         return [
 

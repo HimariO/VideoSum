@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings('ignore')
 
 import tensorflow as tf
 import numpy as np
@@ -7,8 +6,12 @@ import getopt
 import sys
 import os
 
-from dnc.dnc import DNC
+from dnc.dnc import *
 from feedforward_controller import FeedforwardController
+from video.recurrent_controller import *
+from video.post_controller import *
+
+warnings.filterwarnings('ignore')
 
 def llprint(message):
     sys.stdout.write(message)
@@ -55,6 +58,7 @@ if __name__ == '__main__':
     from_checkpoint = None
     iterations = 100000
     start_step = 0
+    device_choose = '/gpu:0'
 
     options,_ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'length='])
 
@@ -75,61 +79,73 @@ if __name__ == '__main__':
 
     with graph.as_default():
         with tf.Session(graph=graph, config=config) as session:
-            with tf.device('/gpu:1'):
+            # with tf.device(device_choose):
 
-                llprint("Building Computational Graph ... ")
+            llprint("Building Computational Graph ... ")
 
-                optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
-                summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-                ncomputer = DNC(
-                    FeedforwardController,
-                    input_size,
-                    output_size,
-                    sequence_max_length,
-                    words_count,
-                    word_size,
-                    read_heads,
-                    batch_size
-                )
+            # ncomputer = DNC(
+            #     FeedforwardController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
+            ncomputer = DNCDuo(
+                MemRNNController,
+                DirectPostController,
+                input_size,
+                output_size,
+                sequence_max_length,
+                words_count,
+                word_size,
+                read_heads,
+                batch_size
+            )
 
-                output, _ = ncomputer.get_outputs()
-                squashed_output = tf.clip_by_value(tf.sigmoid(output), 1e-6, 1. - 1e-6)
+            output, _ = ncomputer.get_outputs()
+            squashed_output = tf.clip_by_value(tf.sigmoid(output), 1e-6, 1. - 1e-6)
 
-                loss = binary_cross_entropy(squashed_output, ncomputer.target_output)
+            loss = binary_cross_entropy(squashed_output, ncomputer.target_output)
 
-                summeries = []
+            summeries = []
 
-                gradients = optimizer.compute_gradients(loss)
-                for i, (grad, var) in enumerate(gradients):
-                    if grad is not None:
-                        summeries.append(tf.summary.histogram(var.name + '/grad', grad))
-                        gradients[i] = (tf.clip_by_value(grad, -10, 10), var)
+            gradients = optimizer.compute_gradients(loss)
+            for i, (grad, var) in enumerate(gradients):
+                if grad is not None:
+                    summeries.append(tf.summary.histogram(var.name + '/grad', grad))
+                    gradients[i] = (tf.clip_by_value(grad, -10, 10), var)
 
-                apply_gradients = optimizer.apply_gradients(gradients)
+            apply_gradients = optimizer.apply_gradients(gradients)
 
-                summeries.append(tf.summary.scalar("Loss", loss))
+            summeries.append(tf.summary.scalar("Loss", loss))
 
-                summerize_op = tf.summary.merge(summeries)
-                no_summerize = tf.no_op()
+            summerize_op = tf.summary.merge(summeries)
+            no_summerize = tf.no_op()
 
+            llprint("Done!\n")
+
+            llprint("Initializing Variables ... ")
+            session.run(tf.initialize_all_variables())
+            llprint("Done!\n")
+
+            if from_checkpoint is not None:
+                llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
+                ncomputer.restore(session, ckpts_dir, from_checkpoint)
                 llprint("Done!\n")
 
-                llprint("Initializing Variables ... ")
-                session.run(tf.initialize_all_variables())
-                llprint("Done!\n")
 
-                if from_checkpoint is not None:
-                    llprint("Restoring Checkpoint %s ... " % (from_checkpoint))
-                    ncomputer.restore(session, ckpts_dir, from_checkpoint)
-                    llprint("Done!\n")
+            last_100_losses = []
 
+            start = 0 if start_step == 0 else start_step + 1
+            end = start_step + iterations + 1
 
-                last_100_losses = []
-
-                start = 0 if start_step == 0 else start_step + 1
-                end = start_step + iterations + 1
-
+            try:
                 for i in range(start, end):
                     llprint("\rIteration %d/%d" % (i, end - 1))
 
@@ -143,9 +159,9 @@ if __name__ == '__main__':
 
                     one_big_input = np.concatenate(input_series, axis=1)
                     one_big_output = np.concatenate(output_series, axis=1)
-                    print(one_big_input)
-                    print(one_big_output)
-                    input()
+                    # print(one_big_input)
+                    # print(one_big_output)
+                    # input()
                     summerize = (i % 100 == 0)
                     take_checkpoint = (i != 0) and (i % iterations == 0)
 
@@ -170,3 +186,8 @@ if __name__ == '__main__':
                         llprint("\nSaving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
                         llprint("Done!\n")
+
+            except KeyboardInterrupt:
+                llprint("\nSaving Checkpoint ... "),
+                ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
+                llprint("Done!\n")

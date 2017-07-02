@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import getopt
 import sys
+import math
 
 options, _ = getopt.getopt(sys.argv[1:], '', ['file='])
 filename = 'Ugb_uH72d0I_8_17_memView_27K.npy'
@@ -22,13 +23,17 @@ Vu = np.reshape(mem_dict['usage_vectors'], mem_dict['usage_vectors'].shape[1:])
 fig = plt.figure(figsize=fig_size, dpi=dpi)
 fig.suptitle(filename)
 
-a = fig.add_subplot(2, 3, 1)
+plot_num = Wr.shape[-1] + 2
+row = math.ceil(plot_num**0.5)
+col = math.ceil(plot_num / row)
+
+a = fig.add_subplot(row, col, 1)
 imgplot = plt.imshow(Ww)
 a.set_title('write_weightings')
 a.set_ylabel('step')
 plt.colorbar(orientation='vertical')
 
-a = fig.add_subplot(2, 3, 2)
+a = fig.add_subplot(row, col, 2)
 imgplot = plt.imshow(Vu)
 a.set_title('usage_vectors')
 a.set_ylabel('step')
@@ -36,7 +41,7 @@ plt.colorbar(orientation='vertical')
 # plt.colorbar(ticks=[0.1, 0.3, 0.5, 0.7], orientation='horizontal')
 
 for i in range(Wr.shape[-1]):
-    a = fig.add_subplot(2, 3, 3 + i)
+    a = fig.add_subplot(row, col, 3 + i)
     imgplot = plt.imshow(Wr[:, :, i])
     # imgplot.set_clim(0.0, 0.7)
     a.set_title('readhead[%d]_weightings' % i)
@@ -50,20 +55,20 @@ Ga = np.reshape(mem_dict['allocation_gates'], mem_dict['allocation_gates'].shape
 Gw = np.reshape(mem_dict['write_gates'], mem_dict['write_gates'].shape[:-1])
 Gf = mem_dict['free_gates']
 
-a = fig2.add_subplot(2, 3, 1)
+a = fig2.add_subplot(row, col, 1)
 imgplot = plt.imshow(Ga)
 a.set_title('allocation_gates')
 a.set_xlabel('step')
 plt.colorbar(orientation='horizontal')
 
-a = fig2.add_subplot(2, 3, 2)
+a = fig2.add_subplot(row, col, 2)
 imgplot = plt.imshow(Gw)
 a.set_title('write_gates')
 a.set_xlabel('step')
 plt.colorbar(orientation='horizontal')
 
 for i in range(Gf.shape[-1]):
-    a = fig2.add_subplot(2, 3, 3 + i)
+    a = fig2.add_subplot(row, col, 3 + i)
     imgplot = plt.imshow(Gf[:, :, i])
     a.set_title('free_gates[%d]' % i)
     a.set_xlabel('step')

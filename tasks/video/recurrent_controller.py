@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from dnc.controller import BaseController
+from SELU import *
 
 """
 A 1-layer LSTM recurrent neural network with 256 hidden units
@@ -11,40 +12,12 @@ the state to reset to zero on every input sequnece
 class RecurrentController(BaseController):
 
     def network_vars(self):
-        with tf.variable_scope('LSTM_Controller'):
-            self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(1300, dropout_keep_prob=0.5, reuse=tf.get_variable_scope().reuse)
-            self.state = self.lstm_cell.zero_state(self.batch_size, tf.float32)
-
-    def network_op(self, X, state):
-        X = tf.convert_to_tensor(X)
-        return self.lstm_cell(X, state)
-
-    def get_state(self):
-        return self.state
-
-    def update_state(self, new_state):
-        return tf.no_op()
-
-
-class L2RecurrentController(BaseController):
-
-    def network_vars(self):
-        self.layer = 2
-        self.node = 1024
-
-        # self.initializer = tf.random_normal_initializer(stddev=2 / (self.input_size))
-        self.initializer = tf.orthogonal_initializer()
-
         self.lstm_cell = []
-        for _ in range(self.layer):
-            lstm_cell = tf.contrib.rnn.LSTMCell(self.node, initializer=self.initializer, reuse=tf.get_variable_scope().reuse)
-            lstm_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell, output_keep_prob=0.5)
-            self.lstm_cell.append(lstm_cell)
+        for _ in range(2):
+            self.lstm_cell.append(tf.contrib.rnn.LayerNormBasicLSTMCell(1024, dropout_keep_prob=0.7, state_is_tuple=True))
 
-        if self.layer > 1:
-            self.stack_lstm = tf.contrib.rnn.MultiRNNCell(self.lstm_cell)
-        else:
-            self.stack_lstm = self.lstm_cell[0]
+        self.stack_lstm = tf.contrib.rnn.MultiRNNCell(self.lstm_cell)
+
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
         self.stack_lstm = tf.make_template('LSTMCell', self.stack_lstm)
 
@@ -59,20 +32,41 @@ class L2RecurrentController(BaseController):
         return tf.no_op()
 
 
-class L2NRecurrentController(BaseController):
+class L2RecurrentController(BaseController):
 
     def network_vars(self):
-        self.layer = 2
-        initializer = tf.contrib.layers.xavier_initializer()
-        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(256)
-        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell for _ in range(self.layer)])
+        self.layer = 3
+        self.node = 512
+
+        self.initializer = tf.random_normal_initializer(stddev=2 / (self.input_size + self.output_size))
+        # self.initializer = tf.orthogonal_initializer()
+
+        self.lstm_cell = []
+
+        for _ in range(self.layer):
+            lstm_cell = tf.contrib.rnn.LSTMCell(
+                self.node,
+                initializer=self.initializer,
+                activation=selu,
+                state_is_tuple=True
+            )
+            lstm_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell, output_keep_prob=0.7)
+            self.lstm_cell.append(lstm_cell)
+
+        if self.layer > 1:
+            self.stack_lstm = tf.contrib.rnn.MultiRNNCell(self.lstm_cell, state_is_tuple=True)
+        else:
+            self.stack_lstm = self.lstm_cell[0]
+
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
+        # self.stack_lstm = tf.make_template('LSTMCell', self.stack_lstm)
 
     def network_op(self, X, state):
+        X = tf.convert_to_tensor(X)
+        Y, new_state = self.stack_lstm(X, state)
 
-        with tf.variable_scope('L2_LSTM_Controller'):
-            X = tf.convert_to_tensor(X)
-            return self.stack_lstm(X, state)
+        # Y = tf.contrib.layers.layer_norm(Y)
+        return Y, new_state
 
     def get_state(self):
         return self.state
@@ -81,18 +75,11 @@ class L2NRecurrentController(BaseController):
         return tf.no_op()
 
 
-class L2N512RnnController(L2NRecurrentController):
-
-    def network_vars(self):
-        self.layer = 2
-        initializer = tf.contrib.layers.xavier_initializer()
-        self.lstm_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(768, dropout_keep_prob=0.5)
-        # self.lstm_cell = tf.contrib.rnn.LSTMCell(256, initializer=initializer, use_peepholes=True)
-        self.stack_lstm = tf.contrib.rnn.MultiRNNCell([self.lstm_cell] * self.layer)
-        self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
-
-
 class MemRNNController(L2RecurrentController):
+    """
+    Controller that only output memory read_vector,
+    should be use with direct controller in DNCDuo.
+    """
     def initials(self):
         # defining internal weights of the controller
         self.interface_weights = tf.Variable(

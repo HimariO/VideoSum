@@ -5,6 +5,7 @@ import os
 import getopt
 import sys
 import datetime
+import re
 
 from apiclient import discovery
 from oauth2client import client
@@ -64,6 +65,29 @@ def appendValue(service, sheetid, rangeN, values):
     return result
 
 
+def clearSheet(service, sheetid, rangeN):
+    range_ = rangeN
+
+    clear_values_request_body = {
+        # TODO: Add desired entries to the request body.
+    }
+
+    request = service.spreadsheets().values().clear(spreadsheetId=sheetid, range=range_, body=clear_values_request_body)
+    response = request.execute()
+    return response
+
+
+def createSheet(service, sheetid):
+
+    copy_sheet_to_another_spreadsheet_request_body = {
+        'destination_spreadsheet_id': sheetid,
+    }
+
+    request = service.spreadsheets().sheets().copyTo(spreadsheetId=sheetid, sheetId=0, body=copy_sheet_to_another_spreadsheet_request_body)
+    response = request.execute()
+    return response
+
+
 if __name__ == '__main__':
     options, _ = getopt.getopt(sys.argv[1:], '', ['step=', 'value='])
 
@@ -99,7 +123,13 @@ if __name__ == '__main__':
         ['step-%d' % step, loss_value, str(datetime.datetime.now())],
     ]
 
-    appendValue(service, spreadsheetId, rangeName, values)
+    update_res = appendValue(service, spreadsheetId, rangeName, values)
+
+    pattern = re.compile(r"\w(\d+)")
+    last_row = pattern.search(update_res['updates']['updatedRange']).group(1)
+    if int(last_row) > 3000:
+        createSheet(service, spreadsheetId)
+        clearSheet(service, sheetid, '%s!A2:C3000' % rangeName)
     # result = service.spreadsheets().values().get(
     #     spreadsheetId=spreadsheetId, range=rangeName).execute()
     # values = result.get('values', [])
