@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     llprint("Done!\n")
 
-    batch_size = 1
+    batch_size = 4
     input_size = 2048
     words_count = 256
     word_size = 512
