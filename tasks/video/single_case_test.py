@@ -71,14 +71,14 @@ if __name__ == '__main__':
     data, lexicon_dict = load(anno_file, dict_file)
     llprint("Done!\n")
 
-    batch_size = 4
+    batch_size = 1
     input_size = 2048  # 100352
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
     words_count = 256
-    word_size = 512
-    read_heads = 4
+    word_size = 1024
+    read_heads = 2
 
     graph = tf.Graph()
     config = tf.ConfigProto(allow_soft_placement=True)
@@ -96,20 +96,8 @@ if __name__ == '__main__':
                 llprint("Building Computational Graph ... ")
                 llprint("Building DNC ... ")
 
-                ncomputer = DNC(
-                    L2RecurrentController,
-                    input_size,
-                    output_size,
-                    sequence_max_length,
-                    words_count,
-                    word_size,
-                    read_heads,
-                    batch_size,
-                    testing=True
-                )
-                # ncomputer = DNCDuo(
-                #     MemRNNController,
-                #     DirectPostController,
+                # ncomputer = DNC(
+                #     L2RecurrentController,
                 #     input_size,
                 #     output_size,
                 #     sequence_max_length,
@@ -119,6 +107,18 @@ if __name__ == '__main__':
                 #     batch_size,
                 #     testing=True
                 # )
+                ncomputer = DNCAuto(
+                    AutoController,
+                    input_size,
+                    output_size,
+                    sequence_max_length,
+                    words_count,
+                    word_size,
+                    read_heads,
+                    batch_size,
+                    testing=True,
+                    output_feedback=True
+                )
 
                 if use_VGG:
                     vgg = Vgg19(vgg19_npy_path='./VGG/vgg19.npy')
@@ -128,7 +128,7 @@ if __name__ == '__main__':
                 # summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
                 summaries = []
 
-                output, memory_view = ncomputer.get_outputs()
+                output, memory_view, _ = ncomputer.get_outputs()
                 memory_states = ncomputer.get_memoory_states()
 
                 if not use_w2v:
@@ -158,7 +158,7 @@ if __name__ == '__main__':
                 avg_100_time = 0.
                 avg_counter = 0
 
-                samples = np.random.choice(data[:30000], 5)
+                samples = np.random.choice(data[:100], 10)
                 # samples = data[1689:1695]
 
                 videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
@@ -175,7 +175,7 @@ if __name__ == '__main__':
                 for test_file, target in zip(videos, vid_targets):
                     try:
                         try:
-                            video_input = load_video(video_dir + test_file, use_VGG=use_VGG)
+                            video_input = load_video(video_dir + test_file, use_VGG=use_VGG, sample=6*2)
                             print(colored('frame count: ', color='yellow'), len(video_input))
                             seq_len = len(video_input) + output_len
                             input_len = len(video_input)
@@ -184,7 +184,7 @@ if __name__ == '__main__':
                             continue
                             # sys.exit(0)
 
-                        print('Getting VGG features...')
+                        print('Getting CNN features...')
 
                         input_data = []
 
@@ -206,6 +206,11 @@ if __name__ == '__main__':
 
                         if batch_size > 1:
                             input_data = np.concatenate([input_data for i in range(batch_size)], axis=0)
+
+                        if input_data.shape[2] != ncomputer.input_size:
+                            diff = abs(input_data.shape[2] - ncomputer.input_size)
+                            input_data = np.concatenate([input_data, np.zeros([batch_size, input_data.shape[1], diff])], axis=2)
+                            print(input_data.shape)
 
                         print('seqlen: ', seq_len)
                         print('Feed features into DNC.')
@@ -279,9 +284,9 @@ if __name__ == '__main__':
                             weights = {var.name: tensor for var, tensor in zip(weight_tFvars, weights)}
 
                             # np.save(test_file[:-4] + '_weights_%s.npy' % from_checkpoint, weights)
-                            np.save(test_file[:-4] + '_memView_%s.npy' % from_checkpoint, mem_tuple)
-                            np.save(test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint, mem_matrix)
-                            np.save(test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint, step_output)
+                            np.save(os.path.join('./Visualize', test_file[:-4] + '_memView_%s.npy' % from_checkpoint), mem_tuple)
+                            np.save(os.path.join('./Visualize', test_file[:-4] + '_memMatrix_%s.npy' % from_checkpoint), mem_matrix)
+                            np.save(os.path.join('./Visualize', test_file[:-4] + '_outputMatrix_%s.npy' % from_checkpoint), step_output)
 
                     except KeyboardInterrupt:
 

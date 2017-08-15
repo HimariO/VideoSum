@@ -7,9 +7,11 @@
 *.png
 *.csv
 *.zip
+*.mp4
 
 # tensorboard logs directories
 logs
+old_logs
 test_logs
 
 # IPython checkpoints directories

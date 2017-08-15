@@ -125,11 +125,14 @@ if __name__ == '__main__':
 
     update_res = appendValue(service, spreadsheetId, rangeName, values)
 
-    pattern = re.compile(r"\w(\d+)")
+    pattern = re.compile(r":\w(\d+)")
     last_row = pattern.search(update_res['updates']['updatedRange']).group(1)
-    if int(last_row) > 3000:
+    # print(pattern.search(update_res['updates']['updatedRange']))
+    # print('>>>>>>>>>>>>>>> ', last_row)
+    # print('>>>>>>>>>>>>>>> ', update_res['updates']['updatedRange'])
+    if int(last_row) >= 1000:
         createSheet(service, spreadsheetId)
-        clearSheet(service, sheetid, '%s!A2:C3000' % rangeName)
+        clearSheet(service, spreadsheetId, '%s!A2:C3000' % rangeName)
     # result = service.spreadsheets().values().get(
     #     spreadsheetId=spreadsheetId, range=rangeName).execute()
     # values = result.get('values', [])

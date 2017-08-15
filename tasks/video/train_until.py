@@ -14,6 +14,8 @@ import math
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
+from sklearn import preprocessing
+
 
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
@@ -21,6 +23,10 @@ w2v_dict_file = './dataset/MSR_enW2V_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
+
+
+def get_video_name(annotation):
+    return '%s_%s_%s' % (annotation['VideoID'], annotation['Start'], annotation['End'])
 
 
 def load_video(filepath, sample=6, use_VGG=True):
@@ -75,7 +81,7 @@ def onehot(index, size):
 
 
 def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                   word_emb=None, extend_target=False, setMask=True, concat_input=False):
+                   word_emb=None, extend_target=False, setMask=True, concat_input=False, norm=False):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
 
@@ -140,6 +146,10 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         padding_i = np.zeros([seq_len - input_vec.shape[0], input_vec.shape[1]], dtype=np.float32)
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
+    if norm:
+        # preprocessing.normalize(input_vec, axis=1)
+        preprocessing.scale(input_vec, axis=1)
+
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
     # print(colored('output_vec: ', color='yellow'), output_vec.shape)
@@ -152,7 +162,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
 
 def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False):
+                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False, norm=False):
     """
     output input-output pair with overlay timestep.
     input_vector = [D, D, D, D, D, 0, 0, 0, 0]
@@ -208,7 +218,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     print('video_seq: %d, target_seq: %d' % (input_vec.shape[0], len(output_str)))
     input_len, output_len = input_vec.shape[0], len(output_str)
 
-    over_lap = 5 if min([len(output_str), input_vec.shape[0]]) >= 5 else min([len(output_str), input_vec.shape[0]])
+    over_lap = input_len // 2 if min([len(output_str), input_vec.shape[0]]) >= input_len // 2 else min([len(output_str), input_vec.shape[0]])
 
     seq_len = input_vec.shape[0] + len(output_str) - over_lap
 
@@ -234,6 +244,9 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
         mask = np.concatenate([mask, np.zeros(post_padding)])
         seq_len += post_padding
 
+    if norm:
+        preprocessing.normalize(input_vec, axis=1)
+        # preprocessing.scale(input_vec, axis=1)
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
     # print(colored('output_vec: ', color='yellow'), output_vec.shape)

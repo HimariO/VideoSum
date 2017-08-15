@@ -86,19 +86,8 @@ if __name__ == '__main__':
             optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            # ncomputer = DNC(
-            #     FeedforwardController,
-            #     input_size,
-            #     output_size,
-            #     sequence_max_length,
-            #     words_count,
-            #     word_size,
-            #     read_heads,
-            #     batch_size
-            # )
-            ncomputer = DNCDuo(
-                MemRNNController,
-                DirectPostController,
+            ncomputer = DNC(
+                RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -107,11 +96,25 @@ if __name__ == '__main__':
                 read_heads,
                 batch_size
             )
+            # ncomputer = DNCAuto(
+            #     AutoController,
+            #     input_size,
+            #     output_size,
+            #     sequence_max_length,
+            #     words_count,
+            #     word_size,
+            #     read_heads,
+            #     batch_size
+            # )
 
             output, _ = ncomputer.get_outputs()
             squashed_output = tf.clip_by_value(tf.sigmoid(output), 1e-6, 1. - 1e-6)
 
             loss = binary_cross_entropy(squashed_output, ncomputer.target_output)
+            # loss += tf.losses.mean_squared_error(
+            #     ncomputer.input_data,
+            #     decode_out
+            # )
 
             summeries = []
 

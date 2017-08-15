@@ -60,30 +60,29 @@ if __name__ == '__main__':
 
     llprint("Done!\n")
 
-    batch_size = 4
+    batch_size = 1
     input_size = 2048
     words_count = 256
-    word_size = 512
-    read_heads = 4
+    word_size = 1024
+    read_heads = 2
 
     learning_rate = 1e-4
-    momentum = 0.9
+    momentum = 0.8
 
     from_checkpoint = None
     iterations = len(data)
-    data_size = 50000
+    data_size = 10000
     start_step = 0
 
     last_sum = 1
     last_log = 1
     mis_data_offset = 0
     single_repeat = False
+    feedback = True
 
     options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi='])
 
     """
-    If need to resume training from checkpoint, you must start form iteration which have same step with one of npy sample's start file.
-    due to teh fact that sample in the middle of file have unknow ID(start + miss_data_num), after program restarting with 0 miss_data_num.
     ༼ つ ◕_◕ ༽つ
     """
 
@@ -110,19 +109,16 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
-            optimizer = tf.train.AdamOptimizer(learning_rate)
-            summerizer = tf.summary.FileWriter(tb_logs_dir, graph)
-
             ncomputer = DNC(
-                L2RecurrentController,
+                RecurrentController,
                 input_size,
                 output_size,
                 sequence_max_length,
                 words_count,
                 word_size,
                 read_heads,
-                batch_size
+                batch_size,
+                output_feedback=feedback
             )
             # ncomputer = DNCDuo(
             #     MemRNNController,
@@ -138,15 +134,29 @@ if __name__ == '__main__':
 
             output, _ = ncomputer.get_outputs()
             softmax_output = tf.nn.softmax(output)
-            # memMat = ncomputer.get_memoory_states()
+
+            # global_step = tf.Variable(, trainable=False)
+            # learning_rate = tf.train.exponential_decay(learning_rate, global_step,
+            #                                            100000, 0.96, staircase=True)
+
+            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
+            summerizer = tf.summary.FileWriter(tb_logs_dir, graph)
 
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
             # output tensors will containing all output from both input steps and output steps.
+
             if w2v_emb is None:
-                # loss = tf.reduce_mean(
-                #     loss_weights * tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                loss = tf.reduce_sum(
+                    tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                ) / tf.reduce_sum(loss_weights)
+
+                # loss_decode = tf.losses.mean_squared_error(
+                #     ncomputer.input_data,
+                #     decoder_output
                 # )
-                loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)) / tf.reduce_sum(loss_weights)
+                # loss += loss_decode
+                # loss = tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             else:
                 loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
                 flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
@@ -156,7 +166,7 @@ if __name__ == '__main__':
             gradients = optimizer.compute_gradients(loss)
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
-                    gradients[i] = (tf.clip_by_value(grad, -1, 1), var)
+                    gradients[i] = (tf.clip_by_value(grad, -.5, .5), var)
             for (grad, var) in gradients:
                 if grad is not None:
                     summeries.append(tf.summary.histogram(var.name + '/grad', grad))
@@ -199,13 +209,13 @@ if __name__ == '__main__':
             avg_100_time = 0.
             avg_counter = 0
 
-            current_feat = (None, -1, -1)  # [npy, start_id, end_id]
+            current_feat = (None, -1, -1, None)  # [npy, start_id, end_id, keys]
             input_data = target_outputs = seq_len = mask = None
             included_vid = 0
             seq_reapte = 1
-            seq_video_num = 1 if not single_repeat else 8
+            seq_video_num = 1
 
-            shuffle_range = [start] + [i for i in range(start + (200 - start % 200), end, 200)]
+            shuffle_range = [start] + [i for i in range(start + (100 - start % 100), end, 100)]
             shuffle_range = shuffle_range + [end]
             _shuffle_range = []
 
@@ -221,12 +231,13 @@ if __name__ == '__main__':
                     for f in feat_files_tup:
                         if f[1] <= data_ID and f[2] >= data_ID:
                             llprint('Loading %s...' % f[0])
-                            current_feat = np.load('./dataset/' + f[0]), f[1], f[2]
+                            npy_feats = np.load('./dataset/' + f[0]).tolist()
+                            current_feat = npy_feats, f[1], f[2], list(npy_feats.keys())
                             break
                         else:
-                            current_feat = (None, -1, -1)
+                            current_feat = (None, -1, -1, None)
 
-                    if current_feat[1:] == (-1, -1) and current_feat[0] is None:  # if no data are aliviable.
+                    if current_feat[1:3] == (-1, -1) and current_feat[0] is None:  # if no data are aliviable.
                         print('Can\'t find suitable data for tarining.')
                         sys.exit(0)
 
@@ -241,21 +252,28 @@ if __name__ == '__main__':
                     file_index = data_ID - current_feat[1]
 
                     if batch_size == 1:
-                        sample = data[data_ID]
-                        video_feat = current_feat[0][file_index]
+                        sample = data[data_ID]  # single annotations
+                        video_feat = current_feat[0][get_video_name(sample)]
                     else:
-                        sample = data[data_ID: data_ID + batch_size]
-                        video_feat = current_feat[0][file_index: file_index + batch_size]
-                        if len(video_feat) < batch_size:
-                            temp = current_feat[0][:batch_size - len(video_feat)]
-                            video_feat = np.concatenate([video_feat, temp])
+                        sample = data[data_ID: data_ID + batch_size]  # batch_size of annotations in list.
+                        sample = [anno for anno in sample if get_video_name(anno) in current_feat[3]]
+
+                        if len(sample) < batch_size:
+                            sample += list(current_feat[0].keys())[:batch_size - len(sample)]
+
+                        video_feat = [current_feat[0][get_video_name(anno)] for anno in sample]
 
                     try:
                         if batch_size == 1:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=2, word_emb=w2v_emb, concat_input=False)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=4, word_emb=w2v_emb, concat_input=False, norm=True)
                             # input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, i // data_size)
                         else:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=2, word_emb=w2v_emb, useMix=True, accuTrain=True)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=4, word_emb=w2v_emb, useMix=True, accuTrain=False)
+
+                        if feedback:
+                            feed_b = np.roll(target_outputs_, 1, 1)
+                            feed_b[:, 0, :] = 0
+                            input_data_ = np.concatenate([input_data_, feed_b], axis=2)
 
                         input_data = np.concatenate([input_data, input_data_], axis=1) if input_data is not None else input_data_
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
@@ -287,6 +305,7 @@ if __name__ == '__main__':
                     n = 0
                     while True:
                         loss_value, out_value, _, summary = session.run([
+                            # loss_decode,
                             loss,
                             softmax_output,
                             apply_gradients,
@@ -298,15 +317,42 @@ if __name__ == '__main__':
                             loss_weights: mask
                         })
 
-                        # if loss_value == 0:
-                        #     np.save('debug_target.npy', {'tar': target_outputs, 'out': out_value})
-                        #     sys.exit(0)
+                        debug_var = {
+                            "loss": loss_value,
+                            "soft_max_out": out_value,
+                            "mask": mask,
+                            "target": target_outputs,
+                        }
 
-                        print(colored('[%d]loss: ' % n, color='green'), loss_value)
+                        # np.save("debug.npy", debug_var)
+                        # out_value, d_out_value = session.run([
+                        #     softmax_output,
+                        #     decoder_output,
+                        # ], feed_dict={
+                        #     ncomputer.input_data: input_data,
+                        #     ncomputer.sequence_length: seq_len,
+                        # })
+                        #
+                        # loss_de_value, loss_value, _, summary = session.run([
+                        #     loss_decode,
+                        #     loss,
+                        #     apply_gradients,
+                        #     summerize_op if summerize else no_summerize,
+                        # ], feed_dict={
+                        #     softmax_output: out_value,
+                        #     decoder_output: d_out_value,
+                        #     ncomputer.target_output: target_outputs,
+                        #     ncomputer.sequence_length: seq_len,
+                        #     loss_weights: mask
+                        # })
+
+                        print(colored('[%d]loss: ' % n, color='green'), loss_value, ',', 'loss_de_value')
                         n += 1
                         if first_loss is None:
                             first_loss = loss_value
 
+                        # if loss_value > 10:
+                        #     continue
                         if (n >= seq_reapte) or n >= seq_reapte * 10:
                             if not single_repeat and (not all(last_avg_min_max) or True):
                                 break
@@ -337,7 +383,7 @@ if __name__ == '__main__':
                         start_time_100 = time.time()
                         last_100_losses = []
 
-                    if i - last_log >= 500:
+                    if i - last_log >= 1000:
                         last_log = i
                         llprint("Saving Checkpoint ... "),
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))

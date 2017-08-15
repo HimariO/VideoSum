@@ -69,7 +69,7 @@ class DirectPostController:
         else:
             self.stack_lstm = self.final_lstm
         self.state = self.stack_lstm.zero_state(self.batch_size, tf.float32)
-        self.stack_lstm = tf.make_template('LSTMCell', self.stack_lstm)
+        # self.stack_lstm = tf.make_template('LSTMCell', self.stack_lstm)
 
         # self.output_weights = tf.Variable(
         #     tf.random_normal([self.cell_num, self.output_size], stddev=0.1),

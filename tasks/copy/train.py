@@ -1,5 +1,5 @@
 import warnings
-warnings.filterwarnings('ignore')
+# warnings.filterwarnings('ignore')
 
 import tensorflow as tf
 import numpy as np
@@ -9,6 +9,7 @@ import os
 
 from dnc.dnc import DNC
 from feedforward_controller import FeedforwardController
+from recurrent_controller import *
 
 def llprint(message):
     sys.stdout.write(message)
@@ -72,7 +73,7 @@ if __name__ == '__main__':
             optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
 
             ncomputer = DNC(
-                FeedforwardController,
+                L2RecurrentController,
                 input_size,
                 output_size,
                 2 * sequence_max_length + 1,

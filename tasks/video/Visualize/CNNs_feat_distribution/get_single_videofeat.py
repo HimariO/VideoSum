@@ -17,7 +17,7 @@ sample_fold = './SampleVidImg'
 
 
 class Extractor():
-    def __init__(self, weights=None):
+    def __init__(self, weights=None, layer='avg_pool'):
         """Either load pretrained from imagenet, or load our saved
         weights from our own training."""
 
@@ -35,7 +35,7 @@ class Extractor():
             # We'll extract features at the final pool layer.
             self.model = Model(
                 input=base_model.input,
-                output=base_model.get_layer('avg_pool').output
+                output=base_model.get_layer(layer).output
             )
 
         else:

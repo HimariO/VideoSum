@@ -39,14 +39,14 @@ with open('./dataset/MSR_en.csv', newline='') as csvfile:
     for row in reader:
         datas.append(row)
 
-feats = []
+feats = {}
 
-start = 30000
-end = 50000
+start = 33400
+end = 60001
 end = end if end < len(datas) else len(datas)
 datas = datas[start:end]
 
-num_per_file = 200
+num_per_file = 100
 use_VGG = False
 
 config = tf.ConfigProto()
@@ -60,11 +60,12 @@ with tf.Session(config=config) as sess:
             vgg.build(image_holder)
         else:
             model = Extractor()
+            # model = Extractor(layer="mixed10")
 
         for annotation, ind in zip(datas, range(len(datas))):
-
-            if os.path.isfile(video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])):
-                path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
+            source_data = '%s_%s_%s' % (annotation['VideoID'], annotation['Start'], annotation['End'])
+            if os.path.isfile(video_dir + source_data + '.avi'):
+                path = video_dir + source_data + '.avi'
 
                 feat = []
                 if use_VGG:
@@ -83,14 +84,15 @@ with tf.Session(config=config) as sess:
                         feat.append(model.extract_PIL(Image.fromarray(f)))
 
                 print('%d / %d' % (start + ind, end))
-                feats.append(feat)
+                feats[source_data] = feat
                 print(annotation)
             else:
-                feats.append([0])
+                # feats.append([0])
+                feats[source_data] = [0]
                 print(colored('error', color='red'))
             # break  # one time only
-            if (len(feats) == num_per_file and ind != 0) or ind == len(datas) - 1:
+            if ((ind + 1) % num_per_file == 0 and ind != 0) or ind == len(datas) - 1:
                 feats = np.array(feats)
                 print(colored('Start Saving...', color='green'))
-                np.save('dataset/features_%d_%d.npy' % (start + ind - len(feats) + 1, start + ind), feats)
-                feats = []
+                np.save('dataset_output/features_%d_%d.npy' % (start + ind - num_per_file + 1, start + ind), feats)
+                feats = {}

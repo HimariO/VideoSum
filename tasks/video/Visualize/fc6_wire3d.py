@@ -8,27 +8,50 @@ def fun(x, y, arr):
         return arr[y, x]
     return 0
 
-feat = np.load('features.npy')
-feat = feat
-feat_scale = feat.tolist() * 10
-feat_scale = sorted(feat_scale)  # not really sorting feature by frame, just putting same feature togather.
+# feat = np.load('features.npy')
 
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
+def plotVideo2D(feat):
+    feat10 = []
+    for f in feat:
+        for _ in range(5):
+            feat10.append(f)
+    plt.imshow(feat10)
+    plt.show()
 
-x = np.arange(0, feat.shape[1], 1)  # feat size
-y = np.arange(0, feat.shape[0], 1)  # feat num
-X, Y = np.meshgrid(x, y)
+def plotVideo(feat):
+    feat = feat.tolist()
+    # increase number of frame to 10 time, so we can see it better on plot.
+    feat10 = []
+    for f in feat:
+        for _ in range(5):
+            feat10.append(f)
 
-zs = np.array([fun(x, y, feat) for x, y in zip(np.ravel(X), np.ravel(Y))])
-Z = zs.reshape(X.shape)
+    feat10 = np.array(feat10)
 
-ax.plot_surface(X, Y, Z)
-# ax.plot_wireframe(X, Y, Z)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
 
-ax.set_xlabel('FC6 Feature')
-ax.set_ylabel('Video Frame')
-ax.set_zlabel('Feature Value')
+    x = np.arange(0, feat10.shape[1], 1)  # feat size
+    y = np.arange(0, feat10.shape[0], 1)  # feat num
+    X, Y = np.meshgrid(x, y)
 
-plt.imshow(feat_scale)
-plt.show()
+    zs = np.array([fun(x, y, feat10) for x, y in zip(np.ravel(X), np.ravel(Y))])
+    Z = zs.reshape(X.shape)
+
+    ax.plot_surface(X, Y, Z)
+    # ax.plot_wireframe(X, Y, Z)
+
+    ax.set_xlabel('FC6 Feature')
+    ax.set_ylabel('Video Frame')
+    ax.set_zlabel('Feature Value')
+
+    fig.imshow(feat10)
+    plt.show()
+
+
+def plotVideoAvg(feat):
+    feat = feat.sum(axis=0) / feat.shape[0]
+
+    fig = plt.figure()
+    plt.bar(list(range(feat.shape[0])), feat)
+    plt.show()
