@@ -211,7 +211,6 @@ class DNC:
         read_weightings = tf.TensorArray(tf.float32, self.sequence_length)
         write_weightings = tf.TensorArray(tf.float32, self.sequence_length)
 
-        controller_state = self.controller.get_state() if self.controller.has_recurrent_nn else (tf.zeros(1), tf.zeros(1))
         memory_state = self.memory.init_memory()
         memory_state_record = [
             tf.TensorArray(tf.float32, self.sequence_length),
@@ -223,6 +222,7 @@ class DNC:
             tf.TensorArray(tf.float32, self.sequence_length),
         ]
 
+        controller_state = self.controller.get_state() if self.controller.has_recurrent_nn else (tf.zeros(1), tf.zeros(1))
         # This 2 line of code will cause problem if controller have more than 1 layer.
         # if not isinstance(controller_state, LSTMStateTuple):
         #     controller_state = LSTMStateTuple(controller_state[0], controller_state[1])
@@ -748,6 +748,7 @@ class DNCPostControl(DNC):
         dependencies = []
         if self.controller.has_recurrent_nn:
             dependencies.append(self.controller.update_state(final_results[9]))  # result[9] is new_controller_state
+            dependencies.append(self.post_control.update_state(final_results[10]))  # result[9] is new_controller_state
 
         with tf.control_dependencies(dependencies):
             self.packed_output = pack_into_tensor(final_results[2], axis=1)
@@ -862,14 +863,8 @@ class DNCDirectPostControl(DNCPostControl):
 
 class DNCDuo(DNCPostControl):
 
-    def __init__(self, controller_class, parllel_controller_class, input_size, output_size, max_sequence_length,
+    def __init__(self, controller_class, input_size, output_size, max_sequence_length,
                  memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
-
-        with tf.device('/gpu:1'):
-            self.post_control = parllel_controller_class(
-                memory_word_size * memory_read_heads + batch_size * output_size,
-                output_size, batch_size
-            )
 
         self.testing = testing
 
@@ -891,22 +886,15 @@ class DNCDuo(DNCPostControl):
 
         self.build_graph()
 
-    def _step_op(self, step, memory_state, controller_state=None, post_controller_state=None):
+    def _step_op(self, step, memory_state, controller_state_mem=None, controller_state_pred=None):
 
         last_read_vectors = memory_state[6]
-        pre_output, interface, nn_state, post_nn_state = None, None, None, None
+        pre_output, interface, nn_state_mem, nn_state_pred = None, None, None, None
 
         if self.controller.has_recurrent_nn:
-            pre_output, interface, nn_state = self.controller.process_input(step, last_read_vectors, controller_state)
+            pre_output, interface, nn_state_mem, nn_state_pred = self.controller.process_input(step, last_read_vectors, controller_state_mem, controller_state_pred)
         else:
             pre_output, interface = self.controller.process_input(step, last_read_vectors)
-
-        with tf.device('/gpu:1'):
-            d_pre_out, post_nn_state = self.post_control.network_op(
-                step,
-                tf.reshape(last_read_vectors, (-1, self.word_size * self.read_heads)),
-                post_controller_state
-            )
 
         usage_vector, write_weighting, memory_matrix, link_matrix, precedence_vector = self.memory.write(
             memory_state[0], memory_state[1], memory_state[5],
@@ -940,7 +928,7 @@ class DNCDuo(DNCPostControl):
                 interface['read_modes'],
             )
 
-        final_out = self.controller.final_output(pre_output, read_vectors) + d_pre_out
+        final_out = self.controller.final_output(pre_output, read_vectors)
 
         return [
 
@@ -959,6 +947,83 @@ class DNCDuo(DNCPostControl):
             interface['write_gate'],
 
             # report new state of RNN if exists
-            nn_state if nn_state is not None else tf.zeros(1),
-            post_nn_state if nn_state is not None else tf.zeros(1),
+            nn_state_mem if nn_state_mem is not None else tf.zeros(1),
+            nn_state_pred if nn_state_pred is not None else tf.zeros(1),
         ]
+
+    def build_graph(self):
+        """
+        builds the computational graph that performs a step-by-step evaluation
+        of the input data batches
+        """
+
+        self.unpacked_input_data = unpack_into_tensorarray(self.input_data, 1, self.sequence_length)
+
+        outputs = tf.TensorArray(tf.float32, self.sequence_length)
+        usage_vectors = tf.TensorArray(tf.float32, self.sequence_length)
+
+        free_gates = tf.TensorArray(tf.float32, self.sequence_length)
+        allocation_gates = tf.TensorArray(tf.float32, self.sequence_length)
+        write_gates = tf.TensorArray(tf.float32, self.sequence_length)
+
+        read_weightings = tf.TensorArray(tf.float32, self.sequence_length)
+        write_weightings = tf.TensorArray(tf.float32, self.sequence_length)
+
+        controller_state_mem, controller_state_pred = self.controller.get_state() if self.controller.has_recurrent_nn else ((tf.zeros(1), tf.zeros(1)), (tf.zeros(1), tf.zeros(1)))
+        # controller_state_pred = self.post_control.get_state()
+
+        memory_state = self.memory.init_memory()
+        memory_state_record = [
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+            tf.TensorArray(tf.float32, self.sequence_length),
+        ]
+
+        final_results = None
+
+        time = tf.constant(0, dtype=tf.int32)
+
+        final_results = tf.while_loop(
+            cond=lambda time, *_: time < self.sequence_length,
+            body=self._loop_body,
+            loop_vars=(
+                time, memory_state, outputs,
+                free_gates, allocation_gates, write_gates,
+                read_weightings, write_weightings,
+                usage_vectors, controller_state_mem, controller_state_pred,
+                *memory_state_record,
+            ),
+            parallel_iterations=32,
+            swap_memory=True
+        )
+
+        dependencies = []
+        if self.controller.has_recurrent_nn:
+            dependencies.append(self.controller.update_state(final_results[9]))  # result[9] is new_controller_state
+            # dependencies.append(self.post_control.update_state(final_results[10]))  # result[9] is new_controller_state
+
+        with tf.control_dependencies(dependencies):
+            self.packed_output = pack_into_tensor(final_results[2], axis=1)
+
+            self.packed_memory_view = {
+                'free_gates': pack_into_tensor(final_results[3], axis=1),
+                'allocation_gates': pack_into_tensor(final_results[4], axis=1),
+                'write_gates': pack_into_tensor(final_results[5], axis=1),
+                'read_weightings': pack_into_tensor(final_results[6], axis=1),
+                'write_weightings': pack_into_tensor(final_results[7], axis=1),
+                'usage_vectors': pack_into_tensor(final_results[8], axis=1)
+            }
+            if self.testing:
+                self.packed_memory_matrixs = {
+                    'memory_matrix': pack_into_tensor(final_results[11], axis=1),
+                    'usage_vector': pack_into_tensor(final_results[12], axis=1),
+                    'precedence_vector': pack_into_tensor(final_results[13], axis=1),
+                    'link_matrix': pack_into_tensor(final_results[14], axis=1),
+                    'write_weighting': pack_into_tensor(final_results[15], axis=1),
+                    'read_weightings': pack_into_tensor(final_results[16], axis=1),
+                    'read_vectors': pack_into_tensor(final_results[17], axis=1),
+                }

@@ -62,28 +62,31 @@ if __name__ == '__main__':
 
     batch_size = 1
     input_size = 2048
-    words_count = 256
-    word_size = 1024
-    read_heads = 2
+    words_count = 512
+    word_size = 512
+    read_heads = 1
 
     learning_rate = 1e-4
     momentum = 0.8
 
     from_checkpoint = None
     iterations = len(data)
-    data_size = 10000
+    data_size = 30000
     start_step = 0
 
     last_sum = 1
     last_log = 1
     mis_data_offset = 0
-    single_repeat = False
-    feedback = True
 
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi='])
+    single_repeat = False
+    feedback = False
+    DEBUG = False
+    show_sentence = False
+
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi=', 'debug='])
 
     """
-    ༼ つ ◕_◕ ༽つ
+    ༼ つ ◕_◕ ༽つ   ❤ ☀ ☆ ☂ ☻ ♞ ☯
     """
 
     for opt in options:
@@ -96,6 +99,12 @@ if __name__ == '__main__':
         elif opt[0] == '--sig_vertifi':
             lowerc = opt[1].lower()
             single_repeat = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--debug':
+            lowerc = opt[1].lower()
+            DEBUG = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--show_sentence':
+            lowerc = opt[1].lower()
+            show_sentence = lowerc == 't' or lowerc == 'true' or lowerc == '1'
 
     graph = tf.Graph()
     config = tf.ConfigProto(allow_soft_placement=True)
@@ -109,54 +118,59 @@ if __name__ == '__main__':
             llprint("Done!")
             llprint("Building DNC ... ")
 
-            ncomputer = DNC(
-                RecurrentController,
-                input_size,
-                output_size,
-                sequence_max_length,
-                words_count,
-                word_size,
-                read_heads,
-                batch_size,
-                output_feedback=feedback
-            )
-            # ncomputer = DNCDuo(
-            #     MemRNNController,
-            #     DirectPostController,
+            # ncomputer = DNC(
+            #     L2RecurrentController,
             #     input_size,
             #     output_size,
             #     sequence_max_length,
             #     words_count,
             #     word_size,
             #     read_heads,
-            #     batch_size
+            #     batch_size,
+            #     output_feedback=feedback
             # )
+            ncomputer = DNCDuo(
+                MemRNNController,
+                input_size,
+                output_size,
+                sequence_max_length,
+                words_count,
+                word_size,
+                read_heads,
+                batch_size
+            )
 
             output, _ = ncomputer.get_outputs()
             softmax_output = tf.nn.softmax(output)
 
-            # global_step = tf.Variable(, trainable=False)
-            # learning_rate = tf.train.exponential_decay(learning_rate, global_step,
-            #                                            100000, 0.96, staircase=True)
-
             # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             optimizer = tf.train.AdamOptimizer(learning_rate)
-            summerizer = tf.summary.FileWriter(tb_logs_dir, graph)
+            # optimizer = tf.train.GradientDescentOptimizer(learning_rate)
 
             loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            target_range = tf.placeholder_with_default([[1, 1] for _ in range(batch_size)], [batch_size, 2])  # start index, target len
+            zero = tf.constant(0, dtype=tf.float32)
             # output tensors will containing all output from both input steps and output steps.
 
-            if w2v_emb is None:
-                loss = tf.reduce_sum(
-                    tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
-                ) / tf.reduce_sum(loss_weights)
+            if w2v_emb is None:  # using one-hot embedding
+                # loss = tf.reduce_sum(
+                #     tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
+                # ) / tf.reduce_sum(loss_weights)
+                loss_decode = None
+                batch_loss_slice = []
 
-                # loss_decode = tf.losses.mean_squared_error(
+                for out, label, rang in zip(tf.unstack(output, axis=0), tf.unstack(ncomputer.target_output, axis=0), tf.unstack(target_range, axis=0)):
+                    out = out[rang[0]:rang[1], :]
+                    label = label[rang[0]:rang[1], :]
+                    L = tf.nn.softmax_cross_entropy_with_logits(logits=out, labels=label)
+                    batch_loss_slice.append(L)
+
+                loss = tf.reduce_sum(tf.stack(batch_loss_slice)) / tf.reduce_sum(loss_weights)
+                # loss_decode = tf.losses.absolute_difference(
                 #     ncomputer.input_data,
                 #     decoder_output
                 # )
                 # loss += loss_decode
-                # loss = tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
             else:
                 loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
                 flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
@@ -164,9 +178,13 @@ if __name__ == '__main__':
             summeries = []
 
             gradients = optimizer.compute_gradients(loss)
+
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
-                    gradients[i] = (tf.clip_by_value(grad, -.5, .5), var)
+                    # TODO: add grad noise base on "saddle point condition"
+                    noise = tf.random_normal(tf.shape(var), stddev=1e-3)
+                    gradients[i] = (tf.clip_by_value(grad, -.5, .5) + noise, var)
+
             for (grad, var) in gradients:
                 if grad is not None:
                     summeries.append(tf.summary.histogram(var.name + '/grad', grad))
@@ -181,6 +199,7 @@ if __name__ == '__main__':
 
             summerize_op = tf.summary.merge(summeries)
             no_summerize = tf.no_op()
+            summerizer = tf.summary.FileWriter(tb_logs_dir, graph)
 
             llprint("Done!")
 
@@ -200,7 +219,7 @@ if __name__ == '__main__':
             last_avg_min_max = [0, 0, 0]
 
             start = 0 if start_step == 0 else start_step + 1
-            end = 1500000
+            end = 4000000
             # end = start_step + iterations + 1 if start_step + iterations + 1 < len(data) else len(data)
             reuse_data_param = 1
 
@@ -210,7 +229,7 @@ if __name__ == '__main__':
             avg_counter = 0
 
             current_feat = (None, -1, -1, None)  # [npy, start_id, end_id, keys]
-            input_data = target_outputs = seq_len = mask = None
+            input_data = target_outputs = seq_len = target_step = mask = None
             included_vid = 0
             seq_reapte = 1
             seq_video_num = 1
@@ -257,18 +276,22 @@ if __name__ == '__main__':
                     else:
                         sample = data[data_ID: data_ID + batch_size]  # batch_size of annotations in list.
                         sample = [anno for anno in sample if get_video_name(anno) in current_feat[3]]
+                        print(colored(len(sample), color='red'))
 
                         if len(sample) < batch_size:
-                            sample += list(current_feat[0].keys())[:batch_size - len(sample)]
+                            addin_anno = data[:batch_size - len(sample)]
+                            sample += [anno for anno in addin_anno]
 
                         video_feat = [current_feat[0][get_video_name(anno)] for anno in sample]
 
                     try:
                         if batch_size == 1:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(sample, lexicon_dict, video_feat, redu_sample_rate=4, word_emb=w2v_emb, concat_input=False, norm=True)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=3, word_emb=w2v_emb, concat_input=False, norm=False, bucket=False)
+                            target_step_ = np.array([[seq_len_['input_len'], seq_len_['seq_len']]])
                             # input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, i // data_size)
                         else:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=4, word_emb=w2v_emb, useMix=True, accuTrain=False)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=2, word_emb=w2v_emb, useMix=True, accuTrain=False)
+                            target_step_ = np.array([[seq_len_['seq_len'] - seq_len_['seq_len'], seq_len_['seq_len']]])
 
                         if feedback:
                             feed_b = np.roll(target_outputs_, 1, 1)
@@ -279,8 +302,13 @@ if __name__ == '__main__':
                         target_outputs = np.concatenate([target_outputs, target_outputs_], axis=1) if target_outputs is not None else target_outputs_
                         seq_len = seq_len + seq_len_['seq_len'] if seq_len is not None else seq_len_['seq_len']
                         mask = np.concatenate([mask, mask_], axis=1) if mask is not None else mask_
+                        target_step = np.concatenate([target_step, target_step_], axis=0) if target_step is not None else target_step_
 
                         included_vid += 1
+                        if seq_len > 100:
+                            print(seq_len)
+                            input_data = target_outputs = seq_len = mask = target_step = None
+                            continue
 
                         if included_vid < seq_video_num:
                             continue
@@ -296,7 +324,9 @@ if __name__ == '__main__':
                         continue
 
                     summerize = (i - last_sum >= 100)
+                    runtime_statistics = (i % 1000 == 0) and False
                     # take_checkpoint = (i != 0) and (i % 200 == 0)
+
                     print('Feed features into DNC.')
 
                     # reapeating same input for 'seq_reapte' times.
@@ -304,50 +334,76 @@ if __name__ == '__main__':
                     first_loss = None
                     n = 0
                     while True:
-                        loss_value, out_value, _, summary = session.run([
-                            # loss_decode,
-                            loss,
-                            softmax_output,
-                            apply_gradients,
-                            summerize_op if summerize else no_summerize,
-                        ], feed_dict={
-                            ncomputer.input_data: input_data,
-                            ncomputer.target_output: target_outputs,
-                            ncomputer.sequence_length: seq_len,
-                            loss_weights: mask
-                        })
+                        if runtime_statistics:
+                            run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+                            run_metadata = tf.RunMetadata()
 
-                        debug_var = {
-                            "loss": loss_value,
-                            "soft_max_out": out_value,
-                            "mask": mask,
-                            "target": target_outputs,
-                        }
+                            loss_de_value, loss_value, out_value, _, summary = session.run([
+                                loss_decode if loss_decode is not None else tf.no_op(),
+                                loss,
+                                softmax_output,
+                                apply_gradients,
+                                summerize_op if summerize else no_summerize,
+                            ], feed_dict={
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask,
+                                target_range: target_step
+                            },
+                                options=run_options,
+                                run_metadata=run_metadata
+                            )
 
-                        # np.save("debug.npy", debug_var)
-                        # out_value, d_out_value = session.run([
-                        #     softmax_output,
-                        #     decoder_output,
-                        # ], feed_dict={
-                        #     ncomputer.input_data: input_data,
-                        #     ncomputer.sequence_length: seq_len,
-                        # })
-                        #
-                        # loss_de_value, loss_value, _, summary = session.run([
-                        #     loss_decode,
-                        #     loss,
-                        #     apply_gradients,
-                        #     summerize_op if summerize else no_summerize,
-                        # ], feed_dict={
-                        #     softmax_output: out_value,
-                        #     decoder_output: d_out_value,
-                        #     ncomputer.target_output: target_outputs,
-                        #     ncomputer.sequence_length: seq_len,
-                        #     loss_weights: mask
-                        # })
+                            summerizer.add_run_metadata(run_metadata, 'step%d' % i)
+
+                        elif DEBUG:
+                            loss_de_value, loss_value, out_value, raw_output, grads = session.run([
+                                loss_decode if loss_decode is not None else tf.no_op(),
+                                loss,
+                                softmax_output,
+                                output,
+                                gradients,
+                            ], feed_dict={
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask,
+                                target_range: target_step
+                            })
+
+                            debug_var = {
+                                "loss": loss_value,
+                                "softmax_out": out_value,
+                                "raw_out": raw_output,
+                                "mask": mask,
+                                "target": target_outputs,
+                                "grad": {var[1].name: v for var, v in zip(gradients, grads)},
+                            }
+
+                            decode_onehot(lexicon_dict, out_value[0], target=sample['Description'])
+                            summary = None
+                            np.save("debug_%s.npy" % from_checkpoint, debug_var)
+                            sys.exit(0)
+
+                        else:
+                            loss_value, out_value, _, summary = session.run([
+                                loss,
+                                softmax_output,
+                                apply_gradients,
+                                summerize_op if summerize else no_summerize,
+                            ], feed_dict={
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask,
+                                target_range: target_step
+                            })
 
                         print(colored('[%d]loss: ' % n, color='green'), loss_value, ',', 'loss_de_value')
+
                         n += 1
+
                         if first_loss is None:
                             first_loss = loss_value
 
@@ -358,7 +414,9 @@ if __name__ == '__main__':
                                 break
 
                     last_100_losses.append(loss_value)
-                    summerizer.add_summary(summary, i)
+
+                    if summary is not None:
+                        summerizer.add_summary(summary, i)
 
                     if i - last_sum >= 100:
                         last_sum = i
@@ -389,7 +447,7 @@ if __name__ == '__main__':
                         ncomputer.save(session, ckpts_dir, 'step-%d' % (i))
                         llprint("Done!")
 
-                    input_data = target_outputs = seq_len = mask = None  # reset for next group of data.
+                    input_data = target_outputs = seq_len = mask = target_step = None  # reset for next group of data.
 
                 except KeyboardInterrupt:
 

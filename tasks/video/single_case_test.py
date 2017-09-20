@@ -76,9 +76,9 @@ if __name__ == '__main__':
     output_size = len(lexicon_dict) if not use_w2v else w2v_emb.shape[1]
     sequence_max_length = 100
     word_space_size = len(lexicon_dict)
-    words_count = 256
-    word_size = 1024
-    read_heads = 2
+    words_count = 512
+    word_size = 512
+    read_heads = 1
 
     graph = tf.Graph()
     config = tf.ConfigProto(allow_soft_placement=True)
@@ -107,8 +107,8 @@ if __name__ == '__main__':
                 #     batch_size,
                 #     testing=True
                 # )
-                ncomputer = DNCAuto(
-                    AutoController,
+                ncomputer = DNCDuo(
+                    MemRNNController,
                     input_size,
                     output_size,
                     sequence_max_length,
@@ -116,8 +116,7 @@ if __name__ == '__main__':
                     word_size,
                     read_heads,
                     batch_size,
-                    testing=True,
-                    output_feedback=True
+                    testing=True
                 )
 
                 if use_VGG:
@@ -128,7 +127,7 @@ if __name__ == '__main__':
                 # summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
                 summaries = []
 
-                output, memory_view, _ = ncomputer.get_outputs()
+                output, memory_view = ncomputer.get_outputs()
                 memory_states = ncomputer.get_memoory_states()
 
                 if not use_w2v:
@@ -158,7 +157,7 @@ if __name__ == '__main__':
                 avg_100_time = 0.
                 avg_counter = 0
 
-                samples = np.random.choice(data[:100], 10)
+                samples = np.random.choice(data[:100], 20)
                 # samples = data[1689:1695]
 
                 videos = ['%s_%s_%s.avi' % (f['VideoID'], f['Start'], f['End']) for f in samples]
@@ -175,7 +174,7 @@ if __name__ == '__main__':
                 for test_file, target in zip(videos, vid_targets):
                     try:
                         try:
-                            video_input = load_video(video_dir + test_file, use_VGG=use_VGG, sample=6*2)
+                            video_input = load_video(video_dir + test_file, use_VGG=use_VGG, sample=6 * 3)
                             print(colored('frame count: ', color='yellow'), len(video_input))
                             seq_len = len(video_input) + output_len
                             input_len = len(video_input)
@@ -249,6 +248,7 @@ if __name__ == '__main__':
                                 v = word.max()
                                 _sorted = word.argsort()[-5:].tolist()
                                 _sorted.reverse()
+                                print(word_map[index])
 
                                 top5 = [(word_map[ID], word[ID]) for ID in _sorted]
                                 top5_outputs.append(top5)

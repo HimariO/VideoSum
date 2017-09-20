@@ -25,7 +25,53 @@ word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
 
 
+def decode_onehot(lexicon_dict, step_output, target='[?]'):
+
+    assert type(step_output) is np.ndarray
+    assert len(step_output.shape) == 2  # [time_step, output_vector]
+
+    word_map = ['' for i in range(len(lexicon_dict) + 1)]
+    for word in lexicon_dict.keys():
+        ind = lexicon_dict[word]
+        word_map[ind] = word
+
+    sentence_5 = [[''] for i in range(5)]
+    top5_outputs = []
+
+    N = step_output.shape[0]
+
+    for word in [step_output[i, :] for i in range(N)]:
+        index = np.argmax(word)
+        v = word.max()
+        _sorted = word.argsort()[-5:].tolist()
+        _sorted.reverse()
+        print(word_map[index])
+
+        top5 = [(word_map[ID], word[ID]) for ID in _sorted]
+        top5_outputs.append(top5)
+
+    counter = 0
+
+    for t5 in top5_outputs:
+        for w, s in zip(t5, sentence_5):
+            # if counter == input_len:
+            #     s.append('[*]')
+            if s[-1] != w[0]:
+                s.append(w[0])
+        counter += 1
+
+    print(colored('Target: ', color='cyan',), target)
+
+    for sent in sentence_5:
+        out = ''
+        for w in sent:
+            w = colored(w, color='green') if w in target else w
+            out += w + ' '
+        print(colored('DCN: ', color='green'), out)
+
+
 def get_video_name(annotation):
+    # print(annotation)
     return '%s_%s_%s' % (annotation['VideoID'], annotation['Start'], annotation['End'])
 
 
@@ -80,8 +126,26 @@ def onehot(index, size):
     return vec
 
 
+def put_bucket(seq_data):
+    length_options = [20, 50, 100, 150]
+    data_len = seq_data.shape[0] if len(seq_data.shape) <= 2 else seq_data.shape[1]
+    bucket_size = -1
+
+    for i in range(0, len(length_options)):
+        if data_len <= length_options[i]:
+            bucket_size = length_options[i]
+            break
+
+    padding_shape = list(seq_data.shape)
+    padding_shape[-2] = bucket_size - data_len
+    padding = np.zeros(padding_shape)
+
+    seq_data = np.concatenate([padding, seq_data], axis=len(seq_data.shape) - 2)
+    return seq_data
+
+
 def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                   word_emb=None, extend_target=False, setMask=True, concat_input=False, norm=False):
+                   word_emb=None, extend_target=False, setMask=True, concat_input=False, norm=False, bucket=False):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
 
@@ -91,7 +155,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
     else:
         word_space_size = word_emb.shape[1]
 
-    # some video in annotation does not include in dataset.
+    # some video in annotation does not included in dataset.
     if not os.path.isfile(file_path):
         raise OSError(2, 'No such file or directory', file_path)
     elif type(video_feature) is not np.ndarray:
@@ -100,6 +164,12 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
+
+    if bucket:
+        input_vec = put_bucket(input_vec)
+        # output_vec = put_bucket(output_vec)
+        # mask = put_bucket(mask)
+        # seq_len = input_vec.shape[0]
 
     if concat_input:
         prev_input = np.array(video_feature[::redu_sample_rate][1:])
@@ -147,8 +217,10 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         input_vec = np.concatenate([input_vec, padding_i], axis=0)
 
     if norm:
-        # preprocessing.normalize(input_vec, axis=1)
-        preprocessing.scale(input_vec, axis=1)
+        preprocessing.normalize(input_vec, axis=1)
+        # preprocessing.scale(input_vec, axis=1)
+
+    mask = np.reshape(mask, (1, -1, 1))
 
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
@@ -157,12 +229,12 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         np.reshape(input_vec, (1, -1, input_vec.shape[1])),
         np.reshape(output_vec, (1, -1, word_space_size)),
         {'seq_len': seq_len, 'input_len': input_len, 'output_len': output_len},
-        np.reshape(mask, (1, -1, 1))
+        mask
     )
 
 
 def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False, norm=False):
+                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False, norm=False, bucket=True):
     """
     output input-output pair with overlay timestep.
     input_vector = [D, D, D, D, D, 0, 0, 0, 0]
@@ -192,6 +264,12 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
     input_vec = np.array(video_feature[::redu_sample_rate])
+
+    if bucket:
+        input_vec = put_bucket(input_vec)
+        # output_vec = put_bucket(output_vec)
+        # mask = put_bucket(mask)
+        # seq_len = input_vec.shape[0]
 
     if concat_input:
         prev_input = np.array(video_feature[::redu_sample_rate][1:])
@@ -247,6 +325,9 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     if norm:
         preprocessing.normalize(input_vec, axis=1)
         # preprocessing.scale(input_vec, axis=1)
+
+    mask = np.reshape(mask, (1, -1, 1))
+
     print(colored('seq_len: ', color='yellow'), seq_len)
     # print(colored('input_vec: ', color='yellow'), input_vec.shape)
     # print(colored('output_vec: ', color='yellow'), output_vec.shape)
@@ -254,7 +335,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
         np.reshape(input_vec, (1, -1, input_vec.shape[1])),
         np.reshape(output_vec, (1, -1, word_space_size)),
         {'seq_len': seq_len, 'input_len': input_len, 'output_len': output_len},
-        np.reshape(mask, (1, -1, 1))
+        mask
     )
 
 

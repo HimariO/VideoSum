@@ -60,7 +60,7 @@ if __name__ == '__main__':
     start_step = 0
     device_choose = '/gpu:0'
 
-    options,_ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'length='])
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'length='])
 
     for opt in options:
         if opt[0] == '--checkpoint':
@@ -83,11 +83,12 @@ if __name__ == '__main__':
 
             llprint("Building Computational Graph ... ")
 
-            optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
+            optimizer = tf.train.AdamOptimizer(learning_rate)
+            # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             summerizer = tf.summary.FileWriter(tb_logs_dir, session.graph)
 
-            ncomputer = DNC(
-                RecurrentController,
+            ncomputer = DNCDuo(
+                MemRNNController,
                 input_size,
                 output_size,
                 sequence_max_length,
@@ -97,7 +98,7 @@ if __name__ == '__main__':
                 batch_size
             )
             # ncomputer = DNCAuto(
-            #     AutoController,
+            #     recurrent_controller.AutoController,
             #     input_size,
             #     output_size,
             #     sequence_max_length,
@@ -111,7 +112,7 @@ if __name__ == '__main__':
             squashed_output = tf.clip_by_value(tf.sigmoid(output), 1e-6, 1. - 1e-6)
 
             loss = binary_cross_entropy(squashed_output, ncomputer.target_output)
-            # loss += tf.losses.mean_squared_error(
+            # loss += tf.losses.absolute_difference(
             #     ncomputer.input_data,
             #     decode_out
             # )
@@ -179,7 +180,9 @@ if __name__ == '__main__':
                     })
 
                     last_100_losses.append(loss_value)
-                    summerizer.add_summary(summary, i)
+
+                    if summary is not None:
+                        summerizer.add_summary(summary, i)
 
                     if summerize:
                         llprint("\n\tAvg. Logistic Loss: %.4f\n" % (np.mean(last_100_losses)))

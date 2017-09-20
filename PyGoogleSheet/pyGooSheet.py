@@ -130,7 +130,7 @@ if __name__ == '__main__':
     # print(pattern.search(update_res['updates']['updatedRange']))
     # print('>>>>>>>>>>>>>>> ', last_row)
     # print('>>>>>>>>>>>>>>> ', update_res['updates']['updatedRange'])
-    if int(last_row) >= 1000:
+    if int(last_row) >= 2000:
         createSheet(service, spreadsheetId)
         clearSheet(service, spreadsheetId, '%s!A2:C3000' % rangeName)
     # result = service.spreadsheets().values().get(

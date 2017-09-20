@@ -358,7 +358,7 @@ class Memory:
             the updated link matrix: Tensor(batch_size, words_num, words_num)
             the updated precedence vector: Tensor (batch_size, words_num)
         """
-
+        # with tf.variable_scope("memory_write"):
         lookup_weighting = self.get_lookup_weighting(memory_matrix, key, strength)
         new_usage_vector = self.update_usage_vector(usage_vector, read_weightings, write_weighting, free_gates)
 
@@ -397,7 +397,7 @@ class Memory:
             the updated read_weightings: Tensor(batch_size, words_num, read_heads)
             the recently read vectors: Tensor (batch_size, word_size, read_heads)
         """
-
+        # with tf.variable_scope('memory_read'):
         lookup_weighting = self.get_lookup_weighting(memory_matrix, keys, strengths)
         forward_weighting, backward_weighting = self.get_directional_weightings(read_weightings, link_matrix)
         new_read_weightings = self.update_read_weightings(lookup_weighting, forward_weighting, backward_weighting, read_modes)
@@ -428,8 +428,9 @@ class SharpMemory(Memory):
         normalized_keys = tf.nn.l2_normalize(keys, 1)
 
         similiarity = tf.matmul(normalized_memory, normalized_keys)
-        strengths = tf.expand_dims(strengths, 1)
-        weight = similiarity * strengths
+        # strengths = tf.expand_dims(strengths, 1)
+        # weight = similiarity * strengths
+        weight = similiarity
         weight = tf.multiply(weight, weight)
         weight = tf.nn.softmax(weight, 1)
 
@@ -598,9 +599,6 @@ class KMemory(SharpMemory):
         new_weight = []
 
         for head_weight in tf.unstack(updated_read_weightings, axis=2):
-            from termcolor import colored
-            print(colored('[Debug] Here', color="red"))
-            print(head_weight)
             new_weight.append(self.K_weight(head_weight))
 
         return tf.stack(new_weight, axis=2)
