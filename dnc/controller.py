@@ -39,6 +39,7 @@ class BaseController:
         # the actual size of the neural network input after flatenning and
         # concatenating the input vector with the previously read vctors from memory
         self.nn_input_size = self.word_size * self.read_heads + self.input_size
+        print("nn_input_size:", self.nn_input_size)
 
         self.interface_vector_size = self.word_size * self.read_heads + 3 * self.word_size + 5 * self.read_heads + 3
 

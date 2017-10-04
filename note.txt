@@ -1,0 +1,2 @@
+DNCAuto[4 head] & KMem[512*512]: 0.63 min 100 iter
+DNCAuto[4 head] & KMem[512*512] & Feedback: 0.82 min 100 iter

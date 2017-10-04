@@ -44,17 +44,25 @@ if __name__ == '__main__':
 
     llprint("Loading Data ... ")
 
-    # w2v_emb = np.load(word2v_emb_file) * 3  # [word_num, vector_len]
+    # w2v_emb = np.load(word2v_emb_file) * 10  # [word_num, vector_len]
     w2v_emb = None
+    # Hamming = 64
+    Hamming = None
+    mul_onehot = (256, 2)
+    # mul_onehot_map = mul_onehot_remap(config=mul_onehot_map)
 
-    if w2v_emb is None:
-        data, lexicon_dict = load(anno_file, dict_file)
-        output_size = len(lexicon_dict)
-        word_space_size = len(lexicon_dict)
-    else:
+    if w2v_emb is not None:
         data, lexicon_dict = load(anno_file, w2v_dict_file)
-        output_size = w2v_emb.shape[1]
-        word_space_size = w2v_emb.shape[1]
+        word_space_size = output_size = w2v_emb.shape[1]
+    elif Hamming is not None:
+        data, lexicon_dict = load(anno_file, dict_file)
+        word_space_size = output_size = Hamming
+    elif mul_onehot is not None:
+        data, lexicon_dict = load(anno_file, dict_file)
+        word_space_size = output_size = mul_onehot[0] * mul_onehot[1]
+    else:
+        data, lexicon_dict = load(anno_file, dict_file)
+        word_space_size = output_size = len(lexicon_dict)
 
     sequence_max_length = 500
 
@@ -64,7 +72,7 @@ if __name__ == '__main__':
     input_size = 2048
     words_count = 512
     word_size = 512
-    read_heads = 1
+    read_heads = 4
 
     learning_rate = 1e-4
     momentum = 0.8
@@ -78,12 +86,14 @@ if __name__ == '__main__':
     last_log = 1
     mis_data_offset = 0
 
+    # execution mode
     single_repeat = False
-    feedback = False
+    feedback = True
     DEBUG = False
+    TEST = False
     show_sentence = False
 
-    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi=', 'debug='])
+    options, _ = getopt.getopt(sys.argv[1:], '', ['checkpoint=', 'iterations=', 'start=', 'sig_vertifi=', 'debug=', 'test=', 'show_sentence='])
 
     """
     ༼ つ ◕_◕ ༽つ   ❤ ☀ ☆ ☂ ☻ ♞ ☯
@@ -102,6 +112,9 @@ if __name__ == '__main__':
         elif opt[0] == '--debug':
             lowerc = opt[1].lower()
             DEBUG = lowerc == 't' or lowerc == 'true' or lowerc == '1'
+        elif opt[0] == '--test':
+            lowerc = opt[1].lower()
+            TEST = lowerc == 't' or lowerc == 'true' or lowerc == '1'
         elif opt[0] == '--show_sentence':
             lowerc = opt[1].lower()
             show_sentence = lowerc == 't' or lowerc == 'true' or lowerc == '1'
@@ -129,6 +142,7 @@ if __name__ == '__main__':
             #     batch_size,
             #     output_feedback=feedback
             # )
+
             ncomputer = DNCDuo(
                 MemRNNController,
                 input_size,
@@ -137,43 +151,68 @@ if __name__ == '__main__':
                 words_count,
                 word_size,
                 read_heads,
-                batch_size
+                batch_size,
+                testing=TEST,
+                output_feedback=feedback
             )
 
-            output, _ = ncomputer.get_outputs()
+            output, memory_view = ncomputer.get_outputs()
             softmax_output = tf.nn.softmax(output)
+            memory_states = ncomputer.get_memoory_states()
 
             # optimizer = tf.train.RMSPropOptimizer(learning_rate, momentum=momentum)
             optimizer = tf.train.AdamOptimizer(learning_rate)
             # optimizer = tf.train.GradientDescentOptimizer(learning_rate)
 
-            loss_weights = tf.placeholder(tf.float32, [batch_size, None, 1])
+            loss_weights = tf.placeholder(tf.float32, [batch_size, None])
             target_range = tf.placeholder_with_default([[1, 1] for _ in range(batch_size)], [batch_size, 2])  # start index, target len
+
             zero = tf.constant(0, dtype=tf.float32)
             # output tensors will containing all output from both input steps and output steps.
 
-            if w2v_emb is None:  # using one-hot embedding
-                # loss = tf.reduce_sum(
-                #     tf.nn.softmax_cross_entropy_with_logits(logits=output, labels=ncomputer.target_output)
-                # ) / tf.reduce_sum(loss_weights)
-                loss_decode = None
-                batch_loss_slice = []
+            """
+            Loss functions
+            """
 
-                for out, label, rang in zip(tf.unstack(output, axis=0), tf.unstack(ncomputer.target_output, axis=0), tf.unstack(target_range, axis=0)):
-                    out = out[rang[0]:rang[1], :]
-                    label = label[rang[0]:rang[1], :]
-                    L = tf.nn.softmax_cross_entropy_with_logits(logits=out, labels=label)
-                    batch_loss_slice.append(L)
+            loss_decode = None
+            if w2v_emb is not None:
+                loss = tf.losses.absolute_difference(output * tf.expand_dims(loss_weights, axis=2), ncomputer.target_output)
+                loss /= tf.reduce_sum(loss_weights)
+                # flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
+            elif Hamming is not None:
+                # TODO: code binary CE loss
+                loss = tf.contrib.keras.backend.binary_crossentropy(
+                    output,
+                    ncomputer.target_output,
+                    from_logits=True
+                )
+                loss = tf.reduce_sum(loss)
+                total_size = tf.reduce_sum(loss_weights)
+                total_size += 1e-12  # to avoid division by 0 for all-0 weights
+                loss /= total_size
+            elif mul_onehot is not None:
+                target_output_mul_id = tf.placeholder(tf.int32, [batch_size, None, mul_onehot[1]], name='targets_mul_id')
+                softmax_slice = []
 
-                loss = tf.reduce_sum(tf.stack(batch_loss_slice)) / tf.reduce_sum(loss_weights)
-                # loss_decode = tf.losses.absolute_difference(
-                #     ncomputer.input_data,
-                #     decoder_output
-                # )
-                # loss += loss_decode
-            else:
-                loss = tf.losses.mean_squared_error(output, ncomputer.target_output, loss_weights)
-                flat_read_vectors = tf.reshape(new_read_vectors, (-1, word_size * read_heads))
+                for i in range(mul_onehot[1]):
+                    st = i * mul_onehot[0]
+                    ed = (i + 1) * mul_onehot[0]
+                    seq_loss = tf.contrib.seq2seq.sequence_loss(output[:, :, st:ed], target_output_mul_id[:, :, i], loss_weights)
+                    softmax_slice.append(seq_loss)
+
+                loss = tf.reduce_sum(tf.stack(softmax_slice))
+            else:  # using one-hot embedding
+                loss = tf.contrib.seq2seq.sequence_loss(output, ncomputer.target_output_id, loss_weights)
+
+                """
+                loss for DNCAuto's write_vecotr autoencoder.
+                """
+                if type(ncomputer) is DNCAuto:
+                    loss_decode = tf.losses.absolute_difference(
+                        ncomputer.input_data,
+                        ncomputer.get_decoder_output()
+                    )
+                    loss += loss_decode
 
             summeries = []
 
@@ -183,7 +222,7 @@ if __name__ == '__main__':
                 if grad is not None:
                     # TODO: add grad noise base on "saddle point condition"
                     noise = tf.random_normal(tf.shape(var), stddev=1e-3)
-                    gradients[i] = (tf.clip_by_value(grad, -.5, .5) + noise, var)
+                    gradients[i] = (tf.clip_by_value(grad, -5, 5) + noise, var)
 
             for (grad, var) in gradients:
                 if grad is not None:
@@ -262,7 +301,7 @@ if __name__ == '__main__':
 
                     if i >= reuse_data_param * data_size:  # update input seq len, if train on same data more than one time.
                         reuse_data_param = math.ceil(i / data_size / 2)
-                        seq_video_num = 1 + ((reuse_data_param - 1) * 1) % 1
+                        # seq_video_num = 1 + ((reuse_data_param - 1) * 1) % 1
 
                 try:
                     llprint("\rIteration %d/%d" % (i, end))
@@ -286,11 +325,11 @@ if __name__ == '__main__':
 
                     try:
                         if batch_size == 1:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=3, word_emb=w2v_emb, concat_input=False, norm=False, bucket=False)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(sample, lexicon_dict, video_feat, redu_sample_rate=3, word_emb=w2v_emb, hamming=Hamming, mul_onehot=mul_onehot, concat_input=False, norm=False, bucket=False)
                             target_step_ = np.array([[seq_len_['input_len'], seq_len_['seq_len']]])
                             # input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, i // data_size)
                         else:
-                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=2, word_emb=w2v_emb, useMix=True, accuTrain=False)
+                            input_data_, target_outputs_, seq_len_, mask_ = prepare_batch(sample, lexicon_dict, video_feat, i // data_size, redu_sample_rate=2, word_emb=w2v_emb, hamming=Hamming, mul_onehot=mul_onehot, useMix=True, accuTrain=False)
                             target_step_ = np.array([[seq_len_['seq_len'] - seq_len_['seq_len'], seq_len_['seq_len']]])
 
                         if feedback:
@@ -305,10 +344,6 @@ if __name__ == '__main__':
                         target_step = np.concatenate([target_step, target_step_], axis=0) if target_step is not None else target_step_
 
                         included_vid += 1
-                        if seq_len > 100:
-                            print(seq_len)
-                            input_data = target_outputs = seq_len = mask = target_step = None
-                            continue
 
                         if included_vid < seq_video_num:
                             continue
@@ -338,19 +373,28 @@ if __name__ == '__main__':
                             run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                             run_metadata = tf.RunMetadata()
 
+                            feed = {
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.target_output_id: onehot_vec2id(target_outputs),
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask.reshape([batch_size, -1]),
+                                # target_range: target_step
+                            }
+
+                            if mul_onehot2ids is not None:
+                                print(mul_onehot2ids(target_outputs).shape)
+                                print(mul_onehot2ids(target_outputs).dtype)
+                                input()
+                                feed[target_output_mul_id] = mul_onehot2ids(target_outputs)
+
                             loss_de_value, loss_value, out_value, _, summary = session.run([
                                 loss_decode if loss_decode is not None else tf.no_op(),
                                 loss,
                                 softmax_output,
                                 apply_gradients,
                                 summerize_op if summerize else no_summerize,
-                            ], feed_dict={
-                                ncomputer.input_data: input_data,
-                                ncomputer.target_output: target_outputs,
-                                ncomputer.sequence_length: seq_len,
-                                loss_weights: mask,
-                                target_range: target_step
-                            },
+                            ], feed_dict=feed,
                                 options=run_options,
                                 run_metadata=run_metadata
                             )
@@ -367,38 +411,75 @@ if __name__ == '__main__':
                             ], feed_dict={
                                 ncomputer.input_data: input_data,
                                 ncomputer.target_output: target_outputs,
+                                ncomputer.target_output_id: onehot_vec2id(target_outputs),
                                 ncomputer.sequence_length: seq_len,
-                                loss_weights: mask,
-                                target_range: target_step
+                                loss_weights: mask.reshape([batch_size, -1]),
+                                # target_range: target_step
                             })
 
                             debug_var = {
                                 "loss": loss_value,
                                 "softmax_out": out_value,
                                 "raw_out": raw_output,
-                                "mask": mask,
+                                "mask": mask.reshape([batch_size, -1]),
                                 "target": target_outputs,
                                 "grad": {var[1].name: v for var, v in zip(gradients, grads)},
                             }
 
-                            decode_onehot(lexicon_dict, out_value[0], target=sample['Description'])
+                            decode_output(lexicon_dict, out_value[0], target=sample['Description'], word2v_emb=w2v_emb, hamming=Hamming)
                             summary = None
                             np.save("debug_%s.npy" % from_checkpoint, debug_var)
                             sys.exit(0)
+                        elif TEST:
+                            out_value, raw_output, mem_tuple, mem_matrix = session.run([
+                                softmax_output,
+                                output,
+                                memory_view,
+                                memory_states,
+                            ], feed_dict={
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.target_output_id: onehot_vec2id(target_outputs),
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask.reshape([batch_size, -1]),
+                                # target_range: target_step
+                            })
+
+                            Target_sent = decode_output(lexicon_dict, target_outputs[0], word2v_emb=w2v_emb, hamming=Hamming)
+                            print(colored('Target: ', color='cyan'), Target_sent[0])
+
+                            DNC_sent = decode_output(lexicon_dict, out_value[0], target=Target_sent[0], word2v_emb=w2v_emb, hamming=Hamming)
+                            for out in DNC_sent:
+                                print(colored('DCN: ', color='green'), out)
+
+                            summary = None
+
+                            np.save(os.path.join('./Visualize', get_video_name(sample) + '_memView_%s.npy' % from_checkpoint), mem_tuple)
+                            np.save(os.path.join('./Visualize', get_video_name(sample) + '_memMatrix_%s.npy' % from_checkpoint), mem_matrix)
+                            np.save(os.path.join('./Visualize', get_video_name(sample) + '_outputMatrix_%s.npy' % from_checkpoint), out_value)
+                            sys.exit(0)
 
                         else:
+
+                            feed = {
+                                ncomputer.input_data: input_data,
+                                ncomputer.target_output: target_outputs,
+                                ncomputer.target_output_id: onehot_vec2id(target_outputs),
+                                ncomputer.sequence_length: seq_len,
+                                loss_weights: mask.reshape([batch_size, -1]),
+                                # target_range: target_step
+                            }
+
+                            if mul_onehot2ids is not None:
+                                feed[target_output_mul_id] = mul_onehot2ids(target_outputs)
+
                             loss_value, out_value, _, summary = session.run([
+                                # loss_decode if loss_decode is not None else tf.no_op(),
                                 loss,
                                 softmax_output,
                                 apply_gradients,
                                 summerize_op if summerize else no_summerize,
-                            ], feed_dict={
-                                ncomputer.input_data: input_data,
-                                ncomputer.target_output: target_outputs,
-                                ncomputer.sequence_length: seq_len,
-                                loss_weights: mask,
-                                target_range: target_step
-                            })
+                            ], feed_dict=feed)
 
                         print(colored('[%d]loss: ' % n, color='green'), loss_value, ',', 'loss_de_value')
 

@@ -15,6 +15,7 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
 from termcolor import colored
 from sklearn import preprocessing
+from scipy import spatial
 
 
 anno_file = './dataset/MSR_en.csv'
@@ -23,14 +24,29 @@ w2v_dict_file = './dataset/MSR_enW2V_dict.csv'
 video_dir = './dataset/YouTubeClips/'
 word2v_emb_file = './dataset/MSR_enW2V.npy'
 nlp = spacy.load('en')
+ham_map = None
+mul_onehot_map = None
 
 
-def decode_onehot(lexicon_dict, step_output, target='[?]'):
+def onehot_vec2id(nparr):
+    result = []
+    for batch in nparr:
+        batch_vec = []
+        for step in batch:
+            batch_vec.append(step.argmax())
+        result.append(batch_vec)
+    return np.array(result)
+
+
+def decode_output(lexicon_dict, step_output, target='[?]', word2v_emb=None, hamming=None, mul_onehot=None):
 
     assert type(step_output) is np.ndarray
     assert len(step_output.shape) == 2  # [time_step, output_vector]
 
     word_map = ['' for i in range(len(lexicon_dict) + 1)]
+    if word2v_emb is not None:
+        tree = spatial.KDTree(word2v_emb)
+
     for word in lexicon_dict.keys():
         ind = lexicon_dict[word]
         word_map[ind] = word
@@ -41,14 +57,18 @@ def decode_onehot(lexicon_dict, step_output, target='[?]'):
     N = step_output.shape[0]
 
     for word in [step_output[i, :] for i in range(N)]:
-        index = np.argmax(word)
-        v = word.max()
-        _sorted = word.argsort()[-5:].tolist()
-        _sorted.reverse()
-        print(word_map[index])
+        if word2v_emb is not None:
+            distances, index = tree.query(word, k=5)
+            top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
+        else:
+            index = np.argmax(word)
+            v = word.max()
+            _sorted = word.argsort()[-5:].tolist()
+            _sorted.reverse()
+            # print(word_map[index])
 
-        top5 = [(word_map[ID], word[ID]) for ID in _sorted]
-        top5_outputs.append(top5)
+            top5 = [(word_map[ID], word[ID]) for ID in _sorted]
+            top5_outputs.append(top5)
 
     counter = 0
 
@@ -60,14 +80,16 @@ def decode_onehot(lexicon_dict, step_output, target='[?]'):
                 s.append(w[0])
         counter += 1
 
-    print(colored('Target: ', color='cyan',), target)
+    # print(colored('Target: ', color='cyan',), target)
 
+    output_sentence = []
     for sent in sentence_5:
         out = ''
         for w in sent:
             w = colored(w, color='green') if w in target else w
             out += w + ' '
-        print(colored('DCN: ', color='green'), out)
+        output_sentence.append(out)
+    return output_sentence
 
 
 def get_video_name(annotation):
@@ -126,6 +148,120 @@ def onehot(index, size):
     return vec
 
 
+def id2hamming(index, bits, map_path='./dataset/hamming_map.npy'):
+    """
+    translate word index into fixed length hamming code:
+        binayr code with fix length, same hamming distance between every code pair from the same set.
+
+    bits: length of code, if bits=6, output code will be permutaion of [0,0,0,1,1,1]
+          ex:  [0,1,1,0,1,0]    [1,0,1,0,1,0]    [1,1,0,0,0,1]   ....
+    """
+    assert bits % 2 == 0
+
+    def index2bin(ids):
+        base = np.zeros([bits])
+        for id in ids:
+            base[id] = 1
+        return base
+
+    def H_mtx(n):
+        H2 = [
+            [-1, 1, 1],
+            [1, 1, -1],
+            [1, -1, 1],
+            [1, -1, -1],
+            [-1, 1, -1],
+            [-1, -1, 1],
+        ]
+        if n == 2:
+            return np.array(H2)
+        else:
+            h_mtx = H_mtx(n // 2)
+            top_h = np.concatenate([h_mtx, h_mtx], axis=1)
+            btn_h = np.concatenate([-h_mtx, h_mtx], axis=1)
+            h = np.concatenate([top_h, btn_h], axis=0)
+            return h
+
+    def gen():
+        print('Generating hamming code~')
+        import itertools as it
+        import random
+
+        perum = list(it.combinations(range(bits), 4))
+        perum = list(map(lambda x: index2bin(x), perum))
+        random.shuffle(perum)
+        # perum = H_mtx(bits)
+        # perum = np.concatenate([-perum, perum], axis=0)
+        # perum = (perum + 1) / 2
+        np.save(map_path, np.array(perum))
+        print('Save result to %s' % map_path)
+
+    if not os.path.exists(map_path):
+        gen()
+
+    global ham_map
+
+    if ham_map is None:
+        ham_map = np.load(map_path)
+
+    # if ham_map.shape[1] != bits:
+    #     gen()
+    #     ham_map = np.load(map_path)
+
+    max_num = len(ham_map)
+    # assert index < max_num
+    return ham_map[index]
+
+
+def mul_onehot_remap(path='./dataset/mul_oneshot_remap.json', config=(256, 2)):
+    import json
+    import random
+
+    if os.path.exists(path):
+        with open(path, mode='r') as J:
+            return json.load(J)
+    else:
+        all_n = list(range(config[0] ** config[1]))
+        random.shuffle(all_n)
+        with open(path, mode='w') as J:
+            print("Create new MultiOneHot Mapping file to %s" % path)
+            json.dump(all_n, J)
+            return all_n
+
+
+def id2mul_onehot(index, config=(256, 2)):
+    global mul_onehot_map
+
+    if mul_onehot_map is None:
+        mul_onehot_map = mul_onehot_remap(config=config)
+
+    index = mul_onehot_map[index]
+    mul_index = [(index % config[0]**i) // config[0]**(i - 1) for i in range(1, 1 + config[1])]
+    # print(mul_index)
+    result = None
+    for i in mul_index:
+        if result is None:
+            result = onehot(i, config[0])
+        else:
+            result = np.concatenate([result, onehot(i, config[0])], axis=0)
+    return result
+
+
+def mul_onehot2ids(vec, config=(256, 2)):
+    result = []
+    for batch in vec:
+        b_ids = []
+        for step in batch:
+            s_ids = []
+            for i in range(config[1]):
+                st = i * config[0]
+                ed = (i + 1) * config[0]
+                s_ids.append(step[st:ed].argmax())
+            b_ids.append(s_ids)
+        result.append(b_ids)
+    return np.array(result)
+
+
 def put_bucket(seq_data):
     length_options = [20, 50, 100, 150]
     data_len = seq_data.shape[0] if len(seq_data.shape) <= 2 else seq_data.shape[1]
@@ -145,15 +281,19 @@ def put_bucket(seq_data):
 
 
 def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                   word_emb=None, extend_target=False, setMask=True, concat_input=False, norm=False, bucket=False):
+                   word_emb=None, hamming=None, mul_onehot=None, extend_target=False, setMask=True, concat_input=False, norm=False, bucket=False):
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
 
     # choice output_szie depend on embedding method. (ont-hot or word2vec)
-    if word_emb is None:
-        word_space_size = len(dictionary)
-    else:
+    if hamming is not None:
+        word_space_size = hamming
+    elif mul_onehot is not None:
+        word_space_size = mul_onehot[0] * mul_onehot[1]
+    elif word_emb is not None:
         word_space_size = word_emb.shape[1]
+    else:
+        word_space_size = len(dictionary)
 
     # some video in annotation does not included in dataset.
     if not os.path.isfile(file_path):
@@ -199,10 +339,14 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
     seq_len = input_vec.shape[0] + len(output_str)
     output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0])]
 
-    if word_emb is None:
-        output_vec += [onehot(i, word_space_size) for i in output_str]
-    else:
+    if word_emb is not None:
         output_vec += [word_emb[i] for i in output_str]
+    elif hamming is not None:
+        output_vec += [id2hamming(i, hamming) for i in output_str]
+    elif mul_onehot is not None:
+        output_vec += [id2mul_onehot(i, config=mul_onehot) for i in output_str]
+    else:
+        output_vec += [onehot(i, word_space_size) for i in output_str]
 
     output_vec = np.array(output_vec, dtype=np.float32)
 
@@ -234,7 +378,7 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
 
 def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
-                      word_emb=None, extend_target=False, setMask=True, post_padding=0, concat_input=False, norm=False, bucket=True):
+                      word_emb=None, hamming=None, extend_target=False, setMask=True, post_padding=0, concat_input=False, norm=False, bucket=True):
     """
     output input-output pair with overlay timestep.
     input_vector = [D, D, D, D, D, 0, 0, 0, 0]
@@ -250,10 +394,14 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
 
-    if word_emb is None:
-        word_space_size = len(dictionary)
-    else:
+    if hamming is not None:
+        word_space_size = hamming
+    elif word_emb is not None:
         word_space_size = word_emb.shape[1]
+    elif mul_onehot is not None:
+        word_space_size = mul_onehot[0] * mul_onehot[1]
+    else:
+        word_space_size = len(dictionary)
 
     # some video in annotation does not include in dataset.
     if not os.path.isfile(file_path):
@@ -301,10 +449,14 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
     seq_len = input_vec.shape[0] + len(output_str) - over_lap
 
     output_vec = [np.zeros(word_space_size) for i in range(input_vec.shape[0] - over_lap)]
-    if word_emb is None:
-        output_vec = output_vec + [onehot(i, word_space_size) for i in output_str]
+    if word_emb is not None:
+        output_vec += [word_emb[i] for i in output_str]
+    elif hamming is not None:
+        output_vec += [id2hamming(i, hamming) for i in output_str]
+    elif mul_onehot is not None:
+        output_vec += [id2mul_onehot(i, config=mul_onehot) for i in output_str]
     else:
-        output_vec = output_vec + [word_emb[i] for i in output_str]
+        output_vec += [onehot(i, word_space_size) for i in output_str]
 
     output_vec = output_vec + [np.zeros(word_space_size) for i in range(seq_len - len(output_vec))]
     output_vec = np.array(output_vec, dtype=np.float32)
@@ -340,7 +492,7 @@ def prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate=1,
 
 
 def prepare_batch(annotations, dictionary, video_features, epoch, redu_sample_rate=1,
-                  word_emb=None, extend_target=False, setMask=True, useMix=False, accuTrain=False):
+                  word_emb=None, hamming=None, mul_onehot=None, extend_target=False, setMask=True, useMix=False, accuTrain=False):
     """
     Put batch of label and features into a single nparray.
     annotations: list of annotations with size of 'batch_size'
@@ -367,14 +519,15 @@ def prepare_batch(annotations, dictionary, video_features, epoch, redu_sample_ra
     mask = None
 
     word_space_size = len(dictionary) if word_emb is None else word_emb.shape[1]
+    word_space_size = len(dictionary) if hamming is None else hamming
     none_padded = []
 
     for video_feature, annotation in zip(video_features, annotations):
         try:
             if useMix:
-                input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+                input_data_, target_outputs_, seq_len_, mask_ = prepare_mixSample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, hamming, extend_target, setMask)
             else:
-                input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, extend_target, setMask)
+                input_data_, target_outputs_, seq_len_, mask_ = prepare_sample(annotation, dictionary, video_feature, redu_sample_rate, word_emb, hamming, extend_target, setMask)
 
             if accuTrain:
                 input_data_, target_outputs_, seq_len_, mask_ = accuTraining(input_data_, target_outputs_, mask_, seq_len_, epoch)

@@ -44,12 +44,15 @@ class DNC:
         self.read_heads = memory_read_heads
         self.batch_size = batch_size
 
-        self.memory = KMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.packed_memory_matrixs = {}
         self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
 
         # input data placeholders
         self.input_data = tf.placeholder(tf.float32, [batch_size, None, self.input_size], name='input')
         self.target_output = tf.placeholder(tf.float32, [batch_size, None, self.output_size], name='targets')
+        self.target_output_id = tf.placeholder(tf.int32, [batch_size, None], name='targets_id')
+        # self.target_output_mul_id = tf.placeholder(tf.int32, [batch_size, None, ], name='targets_id')
         self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
 
         self.penalty_term = None
@@ -156,6 +159,15 @@ class DNC:
 
         step_input = self.unpacked_input_data.read(time)
 
+        if self.feedback:
+            # redirect output if DNC is at test time(trainging time will use target as feedback so no need to change TF graph)
+            if time == 0 and self.testing:
+                step_input = tf.slice(step_input, [0, 0], [self.batch_size, self.input_size - self.output_size])
+                step_input = tf.concat([step_input, tf.zeros([self.batch_size, self.output_size])], 1)
+            elif self.testing:
+                step_input = tf.slice(step_input, [0, 0], [self.batch_size, self.input_size - self.output_size])
+                step_input = tf.concat([step_input, self.output_t], 1)
+
         output_list = self._step_op(step_input, memory_state, controller_state)
 
         # update memory parameters
@@ -166,6 +178,7 @@ class DNC:
         new_controller_state = output_list[11]
 
         outputs = outputs.write(time, output_list[7])
+        self.output_t = output_list[7]
 
         # collecting memory view for the current step
         free_gates = free_gates.write(time, output_list[8])
@@ -401,7 +414,6 @@ class DNCAuto(DNC):
             decoder_out
         ]
 
-
     def _loop_body(self, time, memory_state, outputs, decoder_outputs, free_gates, allocation_gates, write_gates,
                    read_weightings, write_weightings, usage_vectors, controller_state, *memory_state_record):
         """
@@ -557,7 +569,10 @@ class DNCAuto(DNC):
             outputs: Tensor (batch_size, time_steps, output_size)
             memory_view: dict
         """
-        return self.packed_output, self.packed_memory_view, self.packed_decoder_output
+        return self.packed_output, self.packed_memory_view
+
+    def get_decoder_output(self):
+        return self.packed_decoder_output
 
 
 class DNCPostControl(DNC):
@@ -570,8 +585,10 @@ class DNCPostControl(DNC):
         )
 
         self.testing = testing
+        self.feedback = output_feedback
+        self.output_t = tf.zeros([batch_size, output_size])
 
-        self.input_size = input_size
+        self.input_size = input_size + output_size if output_feedback else input_size
         self.output_size = output_size
         self.max_sequence_length = max_sequence_length
         self.words_num = memory_words_num
@@ -585,6 +602,7 @@ class DNCPostControl(DNC):
         # input data placeholders
         self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
         self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.target_output_id = tf.placeholder(tf.int32, [batch_size, None], name='targets_id')
         self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
 
         self.build_graph()
@@ -651,6 +669,14 @@ class DNCPostControl(DNC):
 
         step_input = self.unpacked_input_data.read(time)
 
+        if self.feedback:
+            if time == 0 and self.testing:
+                step_input = tf.slice(step_input, [0, 0], [self.batch_size, self.input_size - self.output_size])
+                step_input = tf.concat([step_input, tf.zeros([self.batch_size, self.output_size])], 1)
+            elif self.testing:
+                step_input = tf.slice(step_input, [0, 0], [self.batch_size, self.input_size - self.output_size])
+                step_input = tf.concat([step_input, self.output_t], 1)
+
         output_list = self._step_op(step_input, memory_state, controller_state, post_controller_state)
 
         # update memory parameters
@@ -663,6 +689,7 @@ class DNCPostControl(DNC):
         new_post_controller_state = output_list[12]
 
         outputs = outputs.write(time, output_list[7])
+        self.output_t = output_list[7]
 
         # collecting memory view for the current step
         free_gates = free_gates.write(time, output_list[8])
@@ -798,6 +825,7 @@ class DNCDirectPostControl(DNCPostControl):
         # input data placeholders
         self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
         self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.target_output_id = tf.placeholder(tf.int32, [batch_size, None], name='targets_id')
         self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
 
         self.build_graph()
@@ -864,11 +892,13 @@ class DNCDirectPostControl(DNCPostControl):
 class DNCDuo(DNCPostControl):
 
     def __init__(self, controller_class, input_size, output_size, max_sequence_length,
-                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False):
+                 memory_words_num=256, memory_word_size=64, memory_read_heads=4, batch_size=1, testing=False, output_feedback=False):
 
         self.testing = testing
+        self.feedback = output_feedback
+        self.output_t = tf.zeros([batch_size, output_size])
 
-        self.input_size = input_size
+        self.input_size = input_size + output_size if output_feedback else input_size
         self.output_size = output_size
         self.max_sequence_length = max_sequence_length
         self.words_num = memory_words_num
@@ -877,11 +907,13 @@ class DNCDuo(DNCPostControl):
         self.batch_size = batch_size
 
         self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.packed_memory_matrixs = {}
         self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
 
         # input data placeholders
-        self.input_data = tf.placeholder(tf.float32, [batch_size, None, input_size], name='input')
-        self.target_output = tf.placeholder(tf.float32, [batch_size, None, output_size], name='targets')
+        self.input_data = tf.placeholder(tf.float32, [batch_size, None, self.input_size], name='input')
+        self.target_output = tf.placeholder(tf.float32, [batch_size, None, self.output_size], name='targets')
+        self.target_output_id = tf.placeholder(tf.int32, [batch_size, None], name='targets_id')
         self.sequence_length = tf.placeholder(tf.int32, name='sequence_length')
 
         self.build_graph()

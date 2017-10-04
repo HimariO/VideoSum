@@ -42,7 +42,7 @@ class L2RecurrentController(BaseController):
 
     def network_vars(self):
         self.layer = 3
-        self.node = 512
+        self.node = 1024
 
         # self.initializer = tf.random_normal_initializer(stddev=0.1)
         self.initializer = tf.random_normal_initializer(stddev=2 / (self.input_size + self.output_size))
@@ -55,7 +55,7 @@ class L2RecurrentController(BaseController):
                 self.node,
                 initializer=self.initializer,
                 # state_is_tuple=True,
-                # activation=selu,
+                activation=selu,
             )
             # lstm_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell, output_keep_prob=0.7)
             if _ > 0:
@@ -124,15 +124,13 @@ class MemRNNController(L2RecurrentController):
         for _ in range(self.layer):
             lstm_cell = WeightNormLSTMCell(
                 self.node,
-                initializer=self.initializer,
                 # state_is_tuple=True,
-                # activation=selu,
+                activation=selu,
             )
             lstm_cell_p = WeightNormLSTMCell(
                 self.node,
-                initializer=self.initializer,
                 # state_is_tuple=True,
-                # activation=selu,
+                activation=selu,
             )
             # lstm_cell = tf.contrib.rnn.DropoutWrapper(lstm_cell, output_keep_prob=0.7)
             if _ > 0:
@@ -154,8 +152,11 @@ class MemRNNController(L2RecurrentController):
 
     def network_op(self, X, state_mem, state_pred):
         X = tf.convert_to_tensor(X)
-        Y_pred, new_state_pred = self.stack_lstm_pred(X, state_pred)
+        print('-' * 100)
+        print(X)
+        print('-' * 100)
         Y_mem, new_state_mem = self.stack_lstm_mem(X, state_mem)
+        Y_pred, new_state_pred = self.stack_lstm_pred(X, state_pred)
 
         # Y = tf.contrib.layers.layer_norm(Y)
         return Y_pred, new_state_pred, Y_mem, new_state_mem
@@ -194,9 +195,14 @@ class MemRNNController(L2RecurrentController):
     #     We are not using pre_output here, so it will always be None.
     #     """
     #     flat_read_vectors = tf.reshape(new_read_vectors, (-1, self.word_size * self.read_heads))
-    #     final_output = tf.multiply(pre_output, tf.matmul(flat_read_vectors, self.mem_output_weights))
-
-        # return final_output
+    #     final_output = tf.concat([pre_output, tf.matmul(flat_read_vectors, self.mem_output_weights)], 1)
+    #
+    #     final_output = tf.contrib.layers.fully_connected(
+    #         final_output,
+    #         self.output_size,
+    #         activation_fn=tf.nn.relu
+    #     )
+    #     return final_output
 
 
 class AutoController(L2RecurrentController):

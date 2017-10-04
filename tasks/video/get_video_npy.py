@@ -30,6 +30,25 @@ def load_video(filepath, sample=6):
 
     return np.array(video)
 
+
+def get_video_feat(path):
+    feat = []
+    if use_VGG:
+        frames = load_video(path)
+        for f in frames:
+            f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
+            feat.append(f5_3)
+    else:
+        clip = VideoFileClip(path)
+        skip = 6
+        count = 0
+        for f in clip.iter_frames():
+            count += 1
+            if count % skip != 0:
+                continue
+            feat.append(model.extract_PIL(Image.fromarray(f)))
+    return feat
+
 video_dir = './dataset/YouTubeClips/'
 
 datas = []
@@ -67,21 +86,7 @@ with tf.Session(config=config) as sess:
             if os.path.isfile(video_dir + source_data + '.avi'):
                 path = video_dir + source_data + '.avi'
 
-                feat = []
-                if use_VGG:
-                    frames = load_video(path)
-                    for f in frames:
-                        f5_3 = sess.run([vgg.fc6], feed_dict={image_holder: f})
-                        feat.append(f5_3)
-                else:
-                    clip = VideoFileClip(path)
-                    skip = 6
-                    count = 0
-                    for f in clip.iter_frames():
-                        count += 1
-                        if count % skip != 0:
-                            continue
-                        feat.append(model.extract_PIL(Image.fromarray(f)))
+                feat = get_video_feat(path)
 
                 print('%d / %d' % (start + ind, end))
                 feats[source_data] = feat

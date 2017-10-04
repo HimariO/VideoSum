@@ -32,7 +32,7 @@ mem_mat = mem_dict['memory_matrix']
 read_vecs = mem_dict['read_vectors']
 
 ims = []
-ax1 = fig.add_subplot(2, 1, 1)
+ax1 = fig.add_subplot(1, 2, 1)
 for i in range(link_mat.shape[0]):
     im = ax1.imshow(link_mat[i], animated=True)
     ims.append([im])
@@ -42,7 +42,7 @@ ani = animation.ArtistAnimation(fig, ims, interval=75, blit=False, repeat_delay=
 # ani.save('dynamic_images.mp4', extra_args=['-vcodec', 'libx264', '-pix_fmt', 'yuv420p'])
 
 ims = []
-ax2 = fig.add_subplot(2, 1, 2)
+ax2 = fig.add_subplot(1, 2, 2)
 for i in range(mem_mat.shape[0]):
     im = ax2.imshow(mem_mat[i], animated=True)
     ims.append([im])

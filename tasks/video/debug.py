@@ -69,6 +69,15 @@ def plotVideo(feat):
     plt.show()
 
 
+def onehot_vec2id(nparr):
+    result = []
+    for batch in nparr:
+        batch_vec = []
+        for step in batch:
+            batch_vec.append(step.argmax())
+        result.append(batch_vec)
+    return np.array(result)
+
 data, lexicon_dict = load(anno_file, w2v_dict_file)
 dataset = get_dataset()
 d100 = np.load(dataset[0][0]).tolist()
@@ -106,15 +115,16 @@ raw_out = debug['raw_out']
 grad = debug['grad']
 mask = debug['mask']
 
-debug2 = np.load('debug_step-1270625.npy')
-debug2 = debug2.tolist()
+# debug2 = np.load('debug_step-1270625.npy')
+# debug2 = debug2.tolist()
+#
+# tar2 = debug2['target']
+# out2 = debug2['softmax_out']
+# raw_out2 = debug2['raw_out']
+# grad2 = debug2['grad']
+# mask2 = debug2['mask']
 
-tar2 = debug2['target']
-out2 = debug2['softmax_out']
-raw_out2 = debug2['raw_out']
-grad2 = debug2['grad']
-mask2 = debug2['mask']
-
+print(mask.shape)
 with tf.Graph().as_default():
     with tf.Session() as sess:
         tar_cut = tar[:, 7:12, :]
@@ -123,18 +133,38 @@ with tf.Graph().as_default():
         tar_p = tf.placeholder(tf.float32, shape=tar.shape[1:])
         raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape[1:])
 
+        b_tar_p = tf.placeholder(tf.int32, shape=tar.shape[:-1])
+        b_raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape)
+        mask_p = tf.placeholder(tf.float32, shape=mask.shape[:-1])
+
         tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[1:])
         raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[1:])
 
-        loss = tf.nn.softmax_cross_entropy_with_logits(labels=raw_out_p, logits=raw_out_p)
-        loss_cut = tf.nn.softmax_cross_entropy_with_logits(labels=tar_cut_p, logits=raw_out_cut_p)
+        t_tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[2])
+        t_raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[2])
 
-        A, B = sess.run([loss, loss_cut], feed_dict={
+        loss = tf.nn.softmax_cross_entropy_with_logits(labels=tar_p, logits=raw_out_p)
+        loss_cut = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=tar_cut_p, logits=raw_out_cut_p))
+        # loss_seq = tf.contrib.keras.backend.binary_crossentropy(raw_out_cut_p, tar_cut_p, from_logits=True)
+        loss_seq = tf.reduce_sum(tf.contrib.keras.backend.binary_crossentropy(t_raw_out_cut_p, t_tar_cut_p, from_logits=True), axis=0)
+        # loss_seq = tf.reduce_mean(loss_seq)
+
+        A, B, C = sess.run([loss, loss_cut, loss_seq], feed_dict={
             raw_out_p: raw_out[0],
             raw_out_cut_p: raw_out_cut[0],
+
             tar_p: tar[0],
-            tar_cut_p: tar_cut[0]
+            tar_cut_p: tar_cut[0],
+
+            t_tar_cut_p: tar[0, 4],
+            t_raw_out_cut_p: tar_cut[0, 4],
+
+            b_tar_p: onehot_vec2id(tar),
+            b_raw_out_p: raw_out,
+            mask_p: mask.reshape([1, 12])
         })
 
         print(A)
         print(B)
+        print(C)
+        print(C.shape)
