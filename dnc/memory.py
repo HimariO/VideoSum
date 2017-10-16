@@ -358,7 +358,7 @@ class Memory:
             the updated link matrix: Tensor(batch_size, words_num, words_num)
             the updated precedence vector: Tensor (batch_size, words_num)
         """
-        # with tf.variable_scope("memory_write"):
+        # with tf.name_scope("memory_write"):
         lookup_weighting = self.get_lookup_weighting(memory_matrix, key, strength)
         new_usage_vector = self.update_usage_vector(usage_vector, read_weightings, write_weighting, free_gates)
 
@@ -397,7 +397,7 @@ class Memory:
             the updated read_weightings: Tensor(batch_size, words_num, read_heads)
             the recently read vectors: Tensor (batch_size, word_size, read_heads)
         """
-        # with tf.variable_scope('memory_read'):
+        # with tf.name_scope('memory_read'):
         lookup_weighting = self.get_lookup_weighting(memory_matrix, keys, strengths)
         forward_weighting, backward_weighting = self.get_directional_weightings(read_weightings, link_matrix)
         new_read_weightings = self.update_read_weightings(lookup_weighting, forward_weighting, backward_weighting, read_modes)
@@ -539,94 +539,103 @@ class KMemory(SharpMemory):
         normalized_keys = tf.nn.l2_normalize(keys, 1)
 
         similiarity = tf.matmul(normalized_memory, normalized_keys)
-        # strengths = tf.expand_dims(strengths, 1)
-        # weight = similiarity * strengths
+        strengths = tf.expand_dims(strengths, 1)
+        weight = similiarity * strengths
         # weight = tf.multiply(weight, weight)
-        weight = tf.nn.softmax(similiarity, 1)
 
+        head_weight_slice = []
+
+        for head_weight in tf.unstack(weight, axis=2):
+            # head_weight (batch_size, word_num)
+            head_weight_slice.append(self.K_weight(head_weight))
+
+        weight = tf.stack(head_weight_slice, axis=2)
         return weight
 
-    def K_weight(self, weight_matrix, axis=0):
+    def K_weight(self, weight_matrix, axis=0, debug=False):
         new_weight = []
+        debug_list = []
 
         for batch_weight in tf.unstack(weight_matrix, axis=axis):
             sort_list, indices = tf.nn.top_k(batch_weight, k=8)
+            if debug:
+                debug_list += [indices, sort_list]
+                from termcolor import colored
+                print(colored('[Debug] Here', color="red"))
+                print(indices, sort_list, batch_weight)
 
-            from termcolor import colored
-            print(colored('[Debug] Here', color="red"))
-            print(indices, sort_list, batch_weight)
+            sort_list = tf.nn.softmax(sort_list)
 
             new_weight.append(
-                tf.nn.softmax(
-                    tf.sparse_tensor_to_dense(
-                        tf.SparseTensor(
-                            indices=tf.reshape(tf.cast(indices, tf.int64), [-1, 1]),
-                            values=sort_list,
-                            dense_shape=[self.words_num]
-                        ),
-                        validate_indices=False
-                    )
+                tf.sparse_tensor_to_dense(
+                    tf.SparseTensor(
+                        indices=tf.reshape(tf.cast(indices, tf.int64), [-1, 1]),
+                        values=sort_list,
+                        dense_shape=[self.words_num]
+                    ),
+                    validate_indices=False
                 )
             )
             # TODO: not sure about validate_indices=False will cause any problem or not, need to look into this in the futrue
-
+        if debug:
+            return tf.stack(new_weight), debug_list
         return tf.stack(new_weight)
 
-    def update_read_weightings(self, lookup_weightings, forward_weighting, backward_weighting, read_mode, usage_vector):
-        """
-        updates and returns the current read_weightings
-
-        Parameters:
-        ----------
-        lookup_weightings: Tensor (batch_size, words_num, read_heads)
-            the content-based read weighting
-        forward_weighting: Tensor (batch_size, words_num, read_heads)
-            the forward direction read weighting
-        backward_weighting: Tensor (batch_size, words_num, read_heads)
-            the backward direction read weighting
-        read_mode: Tesnor (batch_size, 3, read_heads)
-            the softmax distribution between the three read modes
-        usage_vector: Tensor (batch_size, words_num)
-
-        Returns: Tensor (batch_size, words_num, read_heads)
-        """
-
-        backward_mode = tf.expand_dims(read_mode[:, 0, :], 1) * backward_weighting
-        lookup_mode = tf.expand_dims(read_mode[:, 1, :], 1) * lookup_weightings
-        forward_mode = tf.expand_dims(read_mode[:, 2, :], 1) * forward_weighting
-        updated_read_weightings = backward_mode + lookup_mode + forward_mode
-
-        new_weight = []
-
-        for head_weight in tf.unstack(updated_read_weightings, axis=2):
-            new_weight.append(self.K_weight(head_weight))
-
-        return tf.stack(new_weight, axis=2)
-
-    def update_write_weighting(self, lookup_weighting, allocation_weighting, write_gate, allocation_gate):
-        """
-        updates and returns the current write_weighting
-
-        Parameters:
-        ----------
-        lookup_weighting: Tensor (batch_size, words_num, 1)
-            the weight of the lookup operation in writing
-        allocation_weighting: Tensor (batch_size, words_num)
-            the weight of the allocation operation in writing
-        write_gate: (batch_size, 1)
-            the fraction of writing to be done
-        allocation_gate: (batch_size, 1)
-            the fraction of allocation to be done
-
-        Returns: Tensor (batch_size, words_num)
-            the updated write_weighting
-        """
-
-        # remove the dimension of 1 from the lookup_weighting
-        lookup_weighting = tf.squeeze(lookup_weighting)
-
-        updated_write_weighting = write_gate * (allocation_gate * allocation_weighting + (1 - allocation_gate) * lookup_weighting)
-
-        updated_write_weighting = self.K_weight(updated_write_weighting)
-
-        return updated_write_weighting
+    # def update_read_weightings(self, lookup_weightings, forward_weighting, backward_weighting, read_mode, usage_vector):
+    #     """
+    #     updates and returns the current read_weightings
+    #
+    #     Parameters:
+    #     ----------
+    #     lookup_weightings: Tensor (batch_size, words_num, read_heads)
+    #         the content-based read weighting
+    #     forward_weighting: Tensor (batch_size, words_num, read_heads)
+    #         the forward direction read weighting
+    #     backward_weighting: Tensor (batch_size, words_num, read_heads)
+    #         the backward direction read weighting
+    #     read_mode: Tesnor (batch_size, 3, read_heads)
+    #         the softmax distribution between the three read modes
+    #     usage_vector: Tensor (batch_size, words_num)
+    #
+    #     Returns: Tensor (batch_size, words_num, read_heads)
+    #     """
+    #
+    #     backward_mode = tf.expand_dims(read_mode[:, 0, :], 1) * backward_weighting
+    #     lookup_mode = tf.expand_dims(read_mode[:, 1, :], 1) * lookup_weightings
+    #     forward_mode = tf.expand_dims(read_mode[:, 2, :], 1) * forward_weighting
+    #     updated_read_weightings = backward_mode + lookup_mode + forward_mode
+    #
+    #     new_weight = []
+    #
+    #     for head_weight in tf.unstack(updated_read_weightings, axis=2):
+    #         new_weight.append(self.K_weight(head_weight))
+    #
+    #     return tf.stack(new_weight, axis=2)
+    #
+    # def update_write_weighting(self, lookup_weighting, allocation_weighting, write_gate, allocation_gate):
+    #     """
+    #     updates and returns the current write_weighting
+    #
+    #     Parameters:
+    #     ----------
+    #     lookup_weighting: Tensor (batch_size, words_num, 1)
+    #         the weight of the lookup operation in writing
+    #     allocation_weighting: Tensor (batch_size, words_num)
+    #         the weight of the allocation operation in writing
+    #     write_gate: (batch_size, 1)
+    #         the fraction of writing to be done
+    #     allocation_gate: (batch_size, 1)
+    #         the fraction of allocation to be done
+    #
+    #     Returns: Tensor (batch_size, words_num)
+    #         the updated write_weighting
+    #     """
+    #
+    #     # remove the dimension of 1 from the lookup_weighting
+    #     lookup_weighting = tf.squeeze(lookup_weighting)
+    #
+    #     updated_write_weighting = write_gate * (allocation_gate * allocation_weighting + (1 - allocation_gate) * lookup_weighting)
+    #
+    #     updated_write_weighting = self.K_weight(updated_write_weighting)
+    #
+    #     return updated_write_weighting

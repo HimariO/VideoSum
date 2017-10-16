@@ -162,6 +162,7 @@ class DNC:
         if self.feedback:
             # redirect output if DNC is at test time(trainging time will use target as feedback so no need to change TF graph)
             if time == 0 and self.testing:
+                #  get input data with out feedback part.
                 step_input = tf.slice(step_input, [0, 0], [self.batch_size, self.input_size - self.output_size])
                 step_input = tf.concat([step_input, tf.zeros([self.batch_size, self.output_size])], 1)
             elif self.testing:
@@ -906,7 +907,7 @@ class DNCDuo(DNCPostControl):
         self.read_heads = memory_read_heads
         self.batch_size = batch_size
 
-        self.memory = SharpMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
+        self.memory = KMemory(self.words_num, self.word_size, self.read_heads, self.batch_size)
         self.packed_memory_matrixs = {}
         self.controller = controller_class(self.input_size, self.output_size, self.read_heads, self.word_size, self.batch_size)
 
@@ -940,7 +941,7 @@ class DNCDuo(DNCPostControl):
             interface['erase_vector']
         )
 
-        if type(self.memory) is SharpMemory:
+        if type(self.memory) is SharpMemory or isinstance(self.memory, KMemory):
             read_weightings, read_vectors = self.memory.read(
                 memory_matrix,
                 memory_state[5],

@@ -193,14 +193,17 @@ if __name__ == '__main__':
             elif mul_onehot is not None:
                 target_output_mul_id = tf.placeholder(tf.int32, [batch_size, None, mul_onehot[1]], name='targets_mul_id')
                 softmax_slice = []
+                softout_slice = []
 
                 for i in range(mul_onehot[1]):
                     st = i * mul_onehot[0]
                     ed = (i + 1) * mul_onehot[0]
                     seq_loss = tf.contrib.seq2seq.sequence_loss(output[:, :, st:ed], target_output_mul_id[:, :, i], loss_weights)
                     softmax_slice.append(seq_loss)
+                    softout_slice.append(tf.nn.softmax(output[:, :, st:ed]))
 
                 loss = tf.reduce_sum(tf.stack(softmax_slice))
+                softmax_output = tf.concat(softout_slice, 2)
             else:  # using one-hot embedding
                 loss = tf.contrib.seq2seq.sequence_loss(output, ncomputer.target_output_id, loss_weights)
 
@@ -383,9 +386,6 @@ if __name__ == '__main__':
                             }
 
                             if mul_onehot2ids is not None:
-                                print(mul_onehot2ids(target_outputs).shape)
-                                print(mul_onehot2ids(target_outputs).dtype)
-                                input()
                                 feed[target_output_mul_id] = mul_onehot2ids(target_outputs)
 
                             loss_de_value, loss_value, out_value, _, summary = session.run([
@@ -402,20 +402,25 @@ if __name__ == '__main__':
                             summerizer.add_run_metadata(run_metadata, 'step%d' % i)
 
                         elif DEBUG:
-                            loss_de_value, loss_value, out_value, raw_output, grads = session.run([
-                                loss_decode if loss_decode is not None else tf.no_op(),
-                                loss,
-                                softmax_output,
-                                output,
-                                gradients,
-                            ], feed_dict={
+                            feed = {
                                 ncomputer.input_data: input_data,
                                 ncomputer.target_output: target_outputs,
                                 ncomputer.target_output_id: onehot_vec2id(target_outputs),
                                 ncomputer.sequence_length: seq_len,
                                 loss_weights: mask.reshape([batch_size, -1]),
                                 # target_range: target_step
-                            })
+                            }
+
+                            if mul_onehot2ids is not None:
+                                feed[target_output_mul_id] = mul_onehot2ids(target_outputs)
+
+                            loss_de_value, loss_value, out_value, raw_output, grads = session.run([
+                                loss_decode if loss_decode is not None else tf.no_op(),
+                                loss,
+                                softmax_output,
+                                output,
+                                gradients,
+                            ], feed_dict=feed)
 
                             debug_var = {
                                 "loss": loss_value,
@@ -426,7 +431,13 @@ if __name__ == '__main__':
                                 "grad": {var[1].name: v for var, v in zip(gradients, grads)},
                             }
 
-                            decode_output(lexicon_dict, out_value[0], target=sample['Description'], word2v_emb=w2v_emb, hamming=Hamming)
+                            Target_sent = decode_output(lexicon_dict, target_outputs[0], word2v_emb=w2v_emb, hamming=Hamming, mul_onehot=mul_onehot)
+                            print(colored('Target: ', color='cyan'), Target_sent[0])
+
+                            DNC_sent = decode_output(lexicon_dict, out_value[0], target=Target_sent[0], word2v_emb=w2v_emb, mul_onehot=mul_onehot)
+                            for out in DNC_sent:
+                                print(colored('DCN: ', color='green'), out)
+
                             summary = None
                             np.save("debug_%s.npy" % from_checkpoint, debug_var)
                             sys.exit(0)
@@ -445,10 +456,10 @@ if __name__ == '__main__':
                                 # target_range: target_step
                             })
 
-                            Target_sent = decode_output(lexicon_dict, target_outputs[0], word2v_emb=w2v_emb, hamming=Hamming)
+                            Target_sent = decode_output(lexicon_dict, target_outputs[0], word2v_emb=w2v_emb, hamming=Hamming, mul_onehot=mul_onehot)
                             print(colored('Target: ', color='cyan'), Target_sent[0])
 
-                            DNC_sent = decode_output(lexicon_dict, out_value[0], target=Target_sent[0], word2v_emb=w2v_emb, hamming=Hamming)
+                            DNC_sent = decode_output(lexicon_dict, out_value[0], target=Target_sent[0], word2v_emb=w2v_emb, mul_onehot=mul_onehot)
                             for out in DNC_sent:
                                 print(colored('DCN: ', color='green'), out)
 
@@ -457,6 +468,7 @@ if __name__ == '__main__':
                             np.save(os.path.join('./Visualize', get_video_name(sample) + '_memView_%s.npy' % from_checkpoint), mem_tuple)
                             np.save(os.path.join('./Visualize', get_video_name(sample) + '_memMatrix_%s.npy' % from_checkpoint), mem_matrix)
                             np.save(os.path.join('./Visualize', get_video_name(sample) + '_outputMatrix_%s.npy' % from_checkpoint), out_value)
+                            # if i >= start + 10:
                             sys.exit(0)
 
                         else:
@@ -488,13 +500,13 @@ if __name__ == '__main__':
                         if first_loss is None:
                             first_loss = loss_value
 
-                        # if loss_value > 10:
+                        # if loss_value > 4:
                         #     continue
                         if (n >= seq_reapte) or n >= seq_reapte * 10:
                             if not single_repeat and (not all(last_avg_min_max) or True):
                                 break
 
-                    last_100_losses.append(loss_value)
+                    last_100_losses.append(first_loss)
 
                     if summary is not None:
                         summerizer.add_summary(summary, i)

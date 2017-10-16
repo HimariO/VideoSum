@@ -8,6 +8,7 @@ import os
 from train_until import *
 import spacy
 import tensorflow as tf
+from dnc.memory import KMemory
 
 nlp = spacy.load('en')
 
@@ -127,44 +128,68 @@ mask = debug['mask']
 print(mask.shape)
 with tf.Graph().as_default():
     with tf.Session() as sess:
-        tar_cut = tar[:, 7:12, :]
-        raw_out_cut = raw_out[:, 7:12, :]
 
-        tar_p = tf.placeholder(tf.float32, shape=tar.shape[1:])
-        raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape[1:])
+        def loss_debug():
+            tar_cut = tar[:, 7:12, :]
+            raw_out_cut = raw_out[:, 7:12, :]
 
-        b_tar_p = tf.placeholder(tf.int32, shape=tar.shape[:-1])
-        b_raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape)
-        mask_p = tf.placeholder(tf.float32, shape=mask.shape[:-1])
+            tar_p = tf.placeholder(tf.float32, shape=tar.shape[1:])
+            raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape[1:])
 
-        tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[1:])
-        raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[1:])
+            b_tar_p = tf.placeholder(tf.int32, shape=tar.shape[:-1])
+            b_raw_out_p = tf.placeholder(tf.float32, shape=raw_out.shape)
+            mask_p = tf.placeholder(tf.float32, shape=mask.shape[:-1])
 
-        t_tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[2])
-        t_raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[2])
+            tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[1:])
+            raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[1:])
 
-        loss = tf.nn.softmax_cross_entropy_with_logits(labels=tar_p, logits=raw_out_p)
-        loss_cut = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=tar_cut_p, logits=raw_out_cut_p))
-        # loss_seq = tf.contrib.keras.backend.binary_crossentropy(raw_out_cut_p, tar_cut_p, from_logits=True)
-        loss_seq = tf.reduce_sum(tf.contrib.keras.backend.binary_crossentropy(t_raw_out_cut_p, t_tar_cut_p, from_logits=True), axis=0)
-        # loss_seq = tf.reduce_mean(loss_seq)
+            t_tar_cut_p = tf.placeholder(tf.float32, shape=tar_cut.shape[2])
+            t_raw_out_cut_p = tf.placeholder(tf.float32, shape=raw_out_cut.shape[2])
 
-        A, B, C = sess.run([loss, loss_cut, loss_seq], feed_dict={
-            raw_out_p: raw_out[0],
-            raw_out_cut_p: raw_out_cut[0],
+            loss = tf.nn.softmax_cross_entropy_with_logits(labels=tar_p, logits=raw_out_p)
+            loss_cut = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=tar_cut_p, logits=raw_out_cut_p))
+            # loss_seq = tf.contrib.keras.backend.binary_crossentropy(raw_out_cut_p, tar_cut_p, from_logits=True)
+            loss_seq = tf.reduce_sum(tf.contrib.keras.backend.binary_crossentropy(t_raw_out_cut_p, t_tar_cut_p, from_logits=True), axis=0)
+            # loss_seq = tf.reduce_mean(loss_seq)
 
-            tar_p: tar[0],
-            tar_cut_p: tar_cut[0],
+            A, B, C = sess.run([loss, loss_cut, loss_seq], feed_dict={
+                raw_out_p: raw_out[0],
+                raw_out_cut_p: raw_out_cut[0],
 
-            t_tar_cut_p: tar[0, 4],
-            t_raw_out_cut_p: tar_cut[0, 4],
+                tar_p: tar[0],
+                tar_cut_p: tar_cut[0],
 
-            b_tar_p: onehot_vec2id(tar),
-            b_raw_out_p: raw_out,
-            mask_p: mask.reshape([1, 12])
-        })
+                t_tar_cut_p: tar[0, 4],
+                t_raw_out_cut_p: tar_cut[0, 4],
 
-        print(A)
-        print(B)
-        print(C)
-        print(C.shape)
+                b_tar_p: onehot_vec2id(tar),
+                b_raw_out_p: raw_out,
+                mask_p: mask.reshape([1, 12])
+            })
+
+            print(A)
+            print(B)
+            print(C)
+            print(C.shape)
+
+        def KMem_debug():
+            weight = np.random.normal(size=[1, 512])
+
+            memory = KMemory(512, 512, 4, 1)
+            weight_pt = tf.placeholder(tf.float32, shape=[1, 512])
+            k_wt, debug_list = memory.K_weight(weight_pt, debug=True)
+
+            result_wt, ind, sortlist = sess.run([k_wt] + debug_list, feed_dict={
+                weight_pt: weight
+            })
+
+            print(weight)
+            print(weight[0].max())
+            print(weight[0].argsort()[-8:])
+
+            print('-' * 100)
+
+            print(result_wt)
+            print(ind, '\n', sortlist)
+
+        KMem_debug()

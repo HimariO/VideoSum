@@ -10,6 +10,7 @@ import csv
 import spacy
 import re
 import math
+import json
 
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PIL import Image
@@ -17,7 +18,7 @@ from termcolor import colored
 from sklearn import preprocessing
 from scipy import spatial
 
-
+# TODO: try to putting togather all label, annotation, map file.
 anno_file = './dataset/MSR_en.csv'
 dict_file = './dataset/MSR_en_dict.csv'
 w2v_dict_file = './dataset/MSR_enW2V_dict.csv'
@@ -51,13 +52,40 @@ def decode_output(lexicon_dict, step_output, target='[?]', word2v_emb=None, hamm
         ind = lexicon_dict[word]
         word_map[ind] = word
 
-    sentence_5 = [[''] for i in range(5)]
+    sentence_5 = [[' '] for i in range(5)]
     top5_outputs = []
 
     N = step_output.shape[0]
 
+    global mul_onehot_map
+
+    if mul_onehot_map is not None:
+        mul_onehot_map = mul_onehot_remap(config=mul_onehot)
+        tree = spatial.KDTree(get_mul_onehot_sapce(lexicon_dict, mul_onehot))
+
+    map_inverse = {}
+
+    for i in range(len(mul_onehot_map)):
+        map_inverse[mul_onehot_map[i]] = i
+
     for word in [step_output[i, :] for i in range(N)]:
-        if word2v_emb is not None:
+        if mul_onehot is not None:
+            # TODO: add argmax decode back.
+
+            if False:
+                # index of word vector in npy file are order by word id, so no need to reverse remaped id.
+                distances, index = tree.query(word, k=5)
+                top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
+            else:
+                fake_batch = word.reshape([1, 1, word.shape[0]])
+                pred_ids = mul_onehot2ids(fake_batch)[0][0]  # (1, 1, mul_onehot[1])
+                word_id = 0
+                for k in range(mul_onehot[1]):
+                    word_id += pred_ids[k] * mul_onehot[0]**k
+                word_id = map_inverse[word_id] if map_inverse[word_id] <= len(word_map) else 2
+                top5_outputs.append([(word_map[word_id], word_id)] * 5)
+
+        elif word2v_emb is not None:
             distances, index = tree.query(word, k=5)
             top5_outputs.append([(word_map[i], d) for d, i in zip(distances, index)])
         else:
@@ -71,11 +99,12 @@ def decode_output(lexicon_dict, step_output, target='[?]', word2v_emb=None, hamm
             top5_outputs.append(top5)
 
     counter = 0
-
+    # print(top5_outputs, '\n', sentence_5)
     for t5 in top5_outputs:
         for w, s in zip(t5, sentence_5):
             # if counter == input_len:
             #     s.append('[*]')
+            # print(w, s)
             if s[-1] != w[0]:
                 s.append(w[0])
         counter += 1
@@ -139,6 +168,11 @@ def load(anno_path, dict_path):
             dictionary[row['word']] = int(row['id'])
 
     return datas, dictionary
+
+
+def load_json(json_path):
+    with open(json_path, mode='r') as json_file:
+        return json.load(json_file)
 
 
 def onehot(index, size):
@@ -247,6 +281,20 @@ def id2mul_onehot(index, config=(256, 2)):
     return result
 
 
+def get_mul_onehot_sapce(dictionary, config, path='./dataset/mul_onehot_space.npy'):
+    if os.path.exists(path):
+        return np.load(path)
+    else:
+        vec_space = [np.zeros([config[0] * config[1]])] * (len(dictionary) + 1)
+        for word in dictionary.keys():
+            word_id = dictionary[word]
+            word_vec = id2mul_onehot(word_id)
+            vec_space[word_id] = word_vec
+        vec_space = np.array(vec_space)
+        np.save(path, vec_space)
+        return vec_space
+
+
 def mul_onehot2ids(vec, config=(256, 2)):
     result = []
     for batch in vec:
@@ -282,9 +330,7 @@ def put_bucket(seq_data):
 
 def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
                    word_emb=None, hamming=None, mul_onehot=None, extend_target=False, setMask=True, concat_input=False, norm=False, bucket=False):
-    file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
     EOS = '<EOS>' if word_emb is None else 'EOS'
-
     # choice output_szie depend on embedding method. (ont-hot or word2vec)
     if hamming is not None:
         word_space_size = hamming
@@ -296,10 +342,11 @@ def prepare_sample(annotation, dictionary, video_feature, redu_sample_rate=1,
         word_space_size = len(dictionary)
 
     # some video in annotation does not included in dataset.
-    if not os.path.isfile(file_path):
-        raise OSError(2, 'No such file or directory', file_path)
-    elif type(video_feature) is not np.ndarray:
+    # if not os.path.isfile(file_path):
+    #     raise OSError(2, 'No such file or directory', file_path)
+    if type(video_feature) is not np.ndarray:
         if video_feature == 0 or video_feature == [0]:
+            file_path = video_dir + '%s_%s_%s.avi' % (annotation['VideoID'], annotation['Start'], annotation['End'])
             raise OSError(2, 'Empty data slot!', file_path)
 
     video_feature = [np.reshape(i, [-1]) for i in video_feature]
